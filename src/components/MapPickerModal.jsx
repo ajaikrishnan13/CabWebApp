@@ -1,71 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react'
-import L from 'leaflet'
+import { loadGoogleMapsScript, reverseGeocodeGoogle, searchGooglePlaces, geocodePlaceId } from '../utils/googleMaps'
 
-// Default center (India center if no coords given)
-const DEFAULT_CENTER = [12.9716, 77.5946]
-
-async function reverseGeocode(lat, lng) {
-  try {
-    const url = `https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/reverseGeocode?location=${lng},${lat}&f=json`
-    const res = await fetch(url)
-    if (!res.ok) throw new Error('Geocoding error')
-    const data = await res.json()
-    if (data?.address?.Match_addr) {
-      return data.address.Match_addr
-    }
-    if (data?.address?.Address) {
-      return `${data.address.Address}, ${data.address.City || ''}`
-    }
-  } catch (err) {
-    console.warn('ArcGIS reverse geocode failed, trying fallback', err)
-  }
-
-  try {
-    const fallbackUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
-    const res = await fetch(fallbackUrl)
-    if (!res.ok) throw new Error('Nominatim error')
-    const data = await res.json()
-    if (data?.display_name) {
-      const parts = data.display_name.split(',').map(s => s.trim())
-      return parts.slice(0, 4).join(', ')
-    }
-  } catch (err) {
-    console.warn('Fallback reverse geocode error', err)
-  }
-
-  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`
-}
-
-async function searchLocation(query) {
-  if (!query || query.length < 2) return []
-  try {
-    const url = `https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?singleLine=${encodeURIComponent(query)}&countryCode=IND&maxLocations=5&forStorage=false&f=json`
-    const res = await fetch(url)
-    if (!res.ok) return []
-    const data = await res.json()
-    return (data.candidates || []).map(c => ({
-      name: c.address,
-      lat: c.location.y,
-      lng: c.location.x
-    }))
-  } catch {
-    return []
-  }
-}
+// Default center: Local metropolitan area (Chennai, India)
+const DEFAULT_CENTER = [12.92404, 80.11550]
 
 export default function MapPickerModal({
   isOpen,
   title = 'Select Location on Map',
   type = 'pickup', // 'pickup' | 'destination'
   initialCoords = null,
+  initialAddress = '',
   onConfirm,
   onClose
 }) {
   const mapContainerRef = useRef(null)
-  const mapInstanceRef = useRef(null)
-  const markerRef = useRef(null)
+  const googleMapRef = useRef(null)
+  const googleMarkerRef = useRef(null)
+  const leafletMapRef = useRef(null)
+  const leafletMarkerRef = useRef(null)
+
   const [selectedCoords, setSelectedCoords] = useState(initialCoords || DEFAULT_CENTER)
-  const [addressText, setAddressText] = useState('')
+  const [addressText, setAddressText] = useState(initialAddress || '')
   const [geocoding, setGeocoding] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
@@ -73,79 +28,15 @@ export default function MapPickerModal({
   const [locating, setLocating] = useState(false)
   const searchDebounceRef = useRef(null)
 
-  // Initialize and update map
+  // Prevent background scrolling when map picker modal is open
   useEffect(() => {
-    if (!isOpen) return
-
-    const initialPos = initialCoords || DEFAULT_CENTER
-    setSelectedCoords(initialPos)
-
-    // Delay slightly to ensure modal DOM is painted
-    const timer = setTimeout(() => {
-      if (!mapContainerRef.current) return
-
-      if (!mapInstanceRef.current) {
-        const map = L.map(mapContainerRef.current, {
-          center: initialPos,
-          zoom: initialCoords ? 15 : 12,
-          zoomControl: false
-        })
-
-        L.control.zoom({ position: 'bottomright' }).addTo(map)
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map)
-
-        // Custom marker icon based on type
-        const markerIcon = L.divIcon({
-          className: 'custom-map-pin-icon',
-          html: `<div class="pin-marker-body ${type === 'pickup' ? 'pickup-pin' : 'dest-pin'}">
-                  <span class="pin-dot"></span>
-                </div>`,
-          iconSize: [32, 42],
-          iconAnchor: [16, 40]
-        })
-
-        const marker = L.marker(initialPos, {
-          draggable: true,
-          icon: markerIcon
-        }).addTo(map)
-
-        marker.on('dragend', async () => {
-          const pos = marker.getLatLng()
-          const newCoords = [pos.lat, pos.lng]
-          setSelectedCoords(newCoords)
-          fetchAddress(pos.lat, pos.lng)
-        })
-
-        map.on('click', (e) => {
-          const { lat, lng } = e.latlng
-          marker.setLatLng([lat, lng])
-          setSelectedCoords([lat, lng])
-          fetchAddress(lat, lng)
-        })
-
-        markerRef.current = marker
-        mapInstanceRef.current = map
-
-        fetchAddress(initialPos[0], initialPos[1])
-      } else {
-        mapInstanceRef.current.invalidateSize()
-        mapInstanceRef.current.setView(initialPos, initialCoords ? 15 : 12)
-        if (markerRef.current) {
-          markerRef.current.setLatLng(initialPos)
-        }
-        fetchAddress(initialPos[0], initialPos[1])
-      }
-    }, 120)
-
-    return () => {
-      clearTimeout(timer)
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove()
-        mapInstanceRef.current = null
-        markerRef.current = null
+    if (isOpen) {
+      document.body.classList.add('modal-open')
+      const originalOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.classList.remove('modal-open')
+        document.body.style.overflow = originalOverflow
       }
     }
   }, [isOpen])
@@ -153,8 +44,12 @@ export default function MapPickerModal({
   const fetchAddress = async (lat, lng) => {
     setGeocoding(true)
     try {
-      const name = await reverseGeocode(lat, lng)
-      setAddressText(name)
+      const addr = await reverseGeocodeGoogle([lat, lng])
+      if (addr) {
+        setAddressText(addr)
+      } else {
+        setAddressText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`)
+      }
     } catch {
       setAddressText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`)
     } finally {
@@ -162,7 +57,159 @@ export default function MapPickerModal({
     }
   }
 
-  // Handle Search Input in Modal
+  // Initialize and update Map when modal opens
+  useEffect(() => {
+    if (!isOpen) return
+
+    setAddressText(initialAddress || '')
+    let isMounted = true
+
+    const initMap = async () => {
+      let centerCoords = initialCoords
+
+      // If coordinates not provided but address text exists, attempt to geocode
+      if (!centerCoords && initialAddress && initialAddress.trim().length > 2) {
+        try {
+          centerCoords = await geocodePlaceId(null, initialAddress)
+        } catch {
+          centerCoords = null
+        }
+      }
+
+      if (!centerCoords) {
+        centerCoords = initialCoords || DEFAULT_CENTER
+      }
+
+      if (!isMounted) return
+      setSelectedCoords(centerCoords)
+
+      // Try Google Maps first
+      try {
+        const maps = await loadGoogleMapsScript()
+        if (!isMounted || !mapContainerRef.current) return
+
+        const centerObj = { lat: centerCoords[0], lng: centerCoords[1] }
+
+        if (!googleMapRef.current) {
+          mapContainerRef.current.innerHTML = ''
+          const map = new maps.Map(mapContainerRef.current, {
+            center: centerObj,
+            zoom: 15,
+            zoomControl: true,
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: false
+          })
+
+          const marker = new maps.Marker({
+            position: centerObj,
+            map,
+            draggable: true,
+            title: type === 'pickup' ? 'Pickup Location' : 'Destination',
+            animation: maps.Animation.DROP
+          })
+
+          marker.addListener('dragend', () => {
+            const pos = marker.getPosition()
+            const newCoords = [pos.lat(), pos.lng()]
+            setSelectedCoords(newCoords)
+            fetchAddress(pos.lat(), pos.lng())
+          })
+
+          map.addListener('click', (e) => {
+            const clicked = e.latLng
+            marker.setPosition(clicked)
+            const newCoords = [clicked.lat(), clicked.lng()]
+            setSelectedCoords(newCoords)
+            fetchAddress(clicked.lat(), clicked.lng())
+          })
+
+          googleMapRef.current = map
+          googleMarkerRef.current = marker
+
+          setTimeout(() => {
+            if (googleMapRef.current) {
+              maps.event.trigger(googleMapRef.current, 'resize')
+              googleMapRef.current.setCenter(centerObj)
+            }
+          }, 250)
+        } else {
+          googleMapRef.current.setCenter(centerObj)
+          googleMapRef.current.setZoom(15)
+          if (googleMarkerRef.current) {
+            googleMarkerRef.current.setPosition(centerObj)
+          }
+        }
+        return
+      } catch (err) {
+        console.warn('Google Maps modal fallback:', err)
+      }
+
+      // Leaflet / OpenStreetMap Fallback if Google Maps fails
+      try {
+        if (!isMounted || !mapContainerRef.current) return
+        const L = window.L || (await import('leaflet')).default || (await import('leaflet'))
+        if (!isMounted || !mapContainerRef.current) return
+
+        if (!leafletMapRef.current) {
+          mapContainerRef.current.innerHTML = ''
+          const map = L.map(mapContainerRef.current).setView(centerCoords, 15)
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+          }).addTo(map)
+
+          const marker = L.marker(centerCoords, { draggable: true }).addTo(map)
+
+          marker.on('dragend', () => {
+            const pos = marker.getLatLng()
+            const newCoords = [pos.lat, pos.lng]
+            setSelectedCoords(newCoords)
+            fetchAddress(pos.lat, pos.lng)
+          })
+
+          map.on('click', (e) => {
+            marker.setLatLng(e.latlng)
+            const newCoords = [e.latlng.lat, e.latlng.lng]
+            setSelectedCoords(newCoords)
+            fetchAddress(e.latlng.lat, e.latlng.lng)
+          })
+
+          leafletMapRef.current = map
+          leafletMarkerRef.current = marker
+
+          setTimeout(() => {
+            if (leafletMapRef.current) {
+              leafletMapRef.current.invalidateSize()
+              leafletMapRef.current.setView(centerCoords, 15)
+            }
+          }, 250)
+        } else {
+          leafletMapRef.current.setView(centerCoords, 15)
+          if (leafletMarkerRef.current) {
+            leafletMarkerRef.current.setLatLng(centerCoords)
+          }
+        }
+      } catch (fallbackErr) {
+        console.error('All map renderers failed', fallbackErr)
+      }
+    }
+
+    const timer = setTimeout(initMap, 100)
+
+    return () => {
+      isMounted = false
+      clearTimeout(timer)
+      if (leafletMapRef.current) {
+        leafletMapRef.current.remove()
+        leafletMapRef.current = null
+      }
+      googleMapRef.current = null
+      googleMarkerRef.current = null
+    }
+  }, [isOpen])
+
+  // Handle Location Search Input
   const handleSearchChange = (val) => {
     setSearchQuery(val)
     if (val.length < 2) {
@@ -172,26 +219,64 @@ export default function MapPickerModal({
     setSearching(true)
     clearTimeout(searchDebounceRef.current)
     searchDebounceRef.current = setTimeout(async () => {
-      const results = await searchLocation(val)
-      setSearchResults(results)
-      setSearching(false)
-    }, 300)
+      try {
+        let results = await searchGooglePlaces(val)
+        if (!results || results.length === 0) {
+          const url = `https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?singleLine=${encodeURIComponent(val)}&countryCode=IND&maxLocations=5&forStorage=false&f=json`
+          const res = await fetch(url)
+          if (res.ok) {
+            const data = await res.json()
+            results = (data.candidates || []).map(item => ({
+              display_name: item.address,
+              lat: item.location.y,
+              lon: item.location.x
+            }))
+          }
+        }
+        setSearchResults(results || [])
+      } catch {
+        setSearchResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, 280)
   }
 
-  const handleSelectSearchResult = (item) => {
-    const coords = [item.lat, item.lng]
+  const handleSelectSearchResult = async (item) => {
+    let lat = item.lat
+    let lon = item.lon
+
+    if (!lat && item.place_id) {
+      const coords = await geocodePlaceId(item.place_id, item.display_name)
+      if (coords) {
+        lat = coords[0]
+        lon = coords[1]
+      }
+    }
+
+    if (!lat) {
+      lat = DEFAULT_CENTER[0]
+      lon = DEFAULT_CENTER[1]
+    }
+
+    const coords = [lat, lon]
     setSelectedCoords(coords)
-    setAddressText(item.name)
+    setAddressText(item.display_name)
     setSearchQuery('')
     setSearchResults([])
 
-    if (mapInstanceRef.current) {
-      mapInstanceRef.current.setView(coords, 16)
-      if (markerRef.current) markerRef.current.setLatLng(coords)
+    if (googleMapRef.current && googleMarkerRef.current) {
+      const posObj = { lat, lng: lon }
+      googleMapRef.current.setCenter(posObj)
+      googleMapRef.current.setZoom(16)
+      googleMarkerRef.current.setPosition(posObj)
+    } else if (leafletMapRef.current && leafletMarkerRef.current) {
+      leafletMapRef.current.setView(coords, 16)
+      leafletMarkerRef.current.setLatLng(coords)
     }
   }
 
-  // Handle Locate Me (GPS)
+  // Handle GPS Locate Me
   const handleLocateMe = () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser')
@@ -202,16 +287,21 @@ export default function MapPickerModal({
       (pos) => {
         const coords = [pos.coords.latitude, pos.coords.longitude]
         setSelectedCoords(coords)
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.setView(coords, 16)
-          if (markerRef.current) markerRef.current.setLatLng(coords)
+        if (googleMapRef.current && googleMarkerRef.current) {
+          const posObj = { lat: coords[0], lng: coords[1] }
+          googleMapRef.current.setCenter(posObj)
+          googleMapRef.current.setZoom(16)
+          googleMarkerRef.current.setPosition(posObj)
+        } else if (leafletMapRef.current && leafletMarkerRef.current) {
+          leafletMapRef.current.setView(coords, 16)
+          leafletMarkerRef.current.setLatLng(coords)
         }
         fetchAddress(coords[0], coords[1])
         setLocating(false)
       },
       (err) => {
         console.warn('Geolocation failed', err)
-        alert('Could not retrieve your location. Please ensure location permissions are enabled.')
+        alert('Could not retrieve your GPS location. Please check browser permissions.')
         setLocating(false)
       },
       { enableHighAccuracy: true, timeout: 8000 }
@@ -227,9 +317,13 @@ export default function MapPickerModal({
   if (!isOpen) return null
 
   return (
-    <div className="modal-backdrop map-picker-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="modal-backdrop map-picker-backdrop"
+      role="presentation"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="map-picker-modal" role="dialog" aria-modal="true" aria-labelledby="map-picker-title">
-        {/* Header */}
+        {/* Header with Title & Close button */}
         <div className="map-picker-header">
           <div className="map-picker-title-wrap">
             <span className={`map-picker-badge ${type === 'pickup' ? 'pickup-badge' : 'dest-badge'}`}>
@@ -237,7 +331,15 @@ export default function MapPickerModal({
             </span>
             <h3 id="map-picker-title">{title}</h3>
           </div>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close map picker">×</button>
+          <button
+            type="button"
+            className="modal-close"
+            onClick={onClose}
+            aria-label="Close map picker"
+            title="Close"
+          >
+            ×
+          </button>
         </div>
 
         {/* Search & Action Bar */}
@@ -256,6 +358,7 @@ export default function MapPickerModal({
                 type="button"
                 className="btn-clear-search"
                 onClick={() => { setSearchQuery(''); setSearchResults([]) }}
+                aria-label="Clear search"
               >
                 ✕
               </button>
@@ -264,7 +367,7 @@ export default function MapPickerModal({
               <ul className="map-picker-search-results">
                 {searchResults.map((item, idx) => (
                   <li key={idx} onClick={() => handleSelectSearchResult(item)}>
-                    <span>📍</span> {item.name}
+                    <span>📍</span> {item.display_name}
                   </li>
                 ))}
               </ul>
@@ -276,9 +379,9 @@ export default function MapPickerModal({
             className="map-locate-btn"
             onClick={handleLocateMe}
             disabled={locating}
-            title="Use current GPS location"
+            title="Use current location"
           >
-            {locating ? '📡 Locating...' : '🧭 GPS'}
+            {locating ? '📡 Locating...' : '📍 Current Location'}
           </button>
         </div>
 
@@ -298,7 +401,7 @@ export default function MapPickerModal({
               {geocoding ? (
                 <span className="geocoding-spinner">Fetching address details...</span>
               ) : (
-                <strong>{addressText || 'Pinned on map'}</strong>
+                <strong>{addressText || `${selectedCoords[0].toFixed(5)}, ${selectedCoords[1].toFixed(5)}`}</strong>
               )}
             </div>
             <small className="address-coords">

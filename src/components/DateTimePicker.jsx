@@ -6,6 +6,8 @@ const MONTH_NAMES = [
 ]
 const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
+const MIN_LEAD_HOURS = 4 // Minimum 4 hours advance notice required
+
 function pad(n) {
   return n.toString().padStart(2, '0')
 }
@@ -39,22 +41,38 @@ function to24h(hour12, minutes, period) {
   return `${pad(h)}:${pad(minutes)}`
 }
 
+/**
+ * Returns the earliest valid date/time object (Current time + 4 hours, rounded up to next 5-min slot)
+ */
+function getEarliestAllowedDateTime() {
+  const earliest = new Date(Date.now() + MIN_LEAD_HOURS * 60 * 60 * 1000)
+  const rem = earliest.getMinutes() % 5
+  if (rem !== 0) {
+    earliest.setMinutes(earliest.getMinutes() + (5 - rem))
+  }
+  earliest.setSeconds(0)
+  earliest.setMilliseconds(0)
+  return earliest
+}
+
 export default function DateTimePicker({ dateValue, timeValue, onChange }) {
   const [mode, setMode] = useState('schedule') // 'now' | 'schedule'
   const [showCalendar, setShowCalendar] = useState(false)
   const calendarRef = useRef(null)
 
-  // Current real-time references
+  // Real-time references & Earliest valid boundary
   const now = new Date()
-  const todayISO = formatDateISO(now)
+  const earliestAllowed = getEarliestAllowedDateTime()
+  const earliestISO = formatDateISO(earliestAllowed)
+  const earliestTimeStr = formatTimeISO(earliestAllowed.getHours(), earliestAllowed.getMinutes())
 
-  // View state for custom calendar
-  const initialDate = dateValue ? new Date(dateValue) : now
+  // View state for custom calendar popover
+  const initialDate = dateValue ? new Date(dateValue) : earliestAllowed
   const [calYear, setCalYear] = useState(initialDate.getFullYear())
   const [calMonth, setCalMonth] = useState(initialDate.getMonth())
 
   // Parse current 12-hour values for custom time controller
-  const { hour12, minutes, period } = parseTimeTo12h(timeValue)
+  const { hour12, minutes, period } = parseTimeTo12h(timeValue || earliestTimeStr)
 
   // Close calendar popover on outside click
   useEffect(() => {
@@ -69,46 +87,60 @@ export default function DateTimePicker({ dateValue, timeValue, onChange }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showCalendar])
 
-  // If no date/time is set, initialize with reasonable defaults
+  // Initialize or correct date/time to ensure minimum 4 hours advance notice
   useEffect(() => {
+    const currentEarliest = getEarliestAllowedDateTime()
+    const currentEarliestDateStr = formatDateISO(currentEarliest)
+    const currentEarliestTimeStr = formatTimeISO(currentEarliest.getHours(), currentEarliest.getMinutes())
+
     if (!dateValue || !timeValue) {
-      const defaultTime = new Date(Date.now() + 15 * 60 * 1000)
-      const roundedMinutes = Math.ceil(defaultTime.getMinutes() / 5) * 5
-      defaultTime.setMinutes(roundedMinutes)
-      defaultTime.setSeconds(0)
-
-      const initialDateStr = dateValue || formatDateISO(defaultTime)
-      const initialTimeStr = timeValue || formatTimeISO(defaultTime.getHours(), defaultTime.getMinutes() % 60)
-      onChange(initialDateStr, initialTimeStr)
+      onChange(currentEarliestDateStr, currentEarliestTimeStr)
+      return
     }
-  }, [])
 
-  // Handle "Ride Now" click
-  const handleRideNow = () => {
-    setMode('now')
-    const rideNowTime = new Date(Date.now() + 10 * 60 * 1000) // 10 mins from now
-    const roundedMins = Math.ceil(rideNowTime.getMinutes() / 5) * 5
-    rideNowTime.setMinutes(roundedMins)
-    const dStr = formatDateISO(rideNowTime)
-    const tStr = formatTimeISO(rideNowTime.getHours(), rideNowTime.getMinutes() % 60)
-    onChange(dStr, tStr)
+    // If existing selection is less than 4 hours ahead, automatically bump to earliest allowed
+    try {
+      const [year, month, day] = dateValue.split('-').map(Number)
+      const [h, m] = timeValue.split(':').map(Number)
+      const selectedDateTime = new Date(year, month - 1, day, h, m)
+      if (selectedDateTime.getTime() < currentEarliest.getTime()) {
+        onChange(currentEarliestDateStr, currentEarliestTimeStr)
+      }
+    } catch {
+      onChange(currentEarliestDateStr, currentEarliestTimeStr)
+    }
+  }, [dateValue, timeValue])
+
+  // Safe changer that enforces >= 4 hours ahead
+  const setSafeDateTime = (newDateStr, newTimeStr) => {
+    const minTime = getEarliestAllowedDateTime()
+    try {
+      const [year, month, day] = newDateStr.split('-').map(Number)
+      const [h, m] = newTimeStr.split(':').map(Number)
+      const target = new Date(year, month - 1, day, h, m)
+
+      if (target.getTime() < minTime.getTime()) {
+        // Bump to minimum allowed
+        onChange(formatDateISO(minTime), formatTimeISO(minTime.getHours(), minTime.getMinutes()))
+      } else {
+        onChange(newDateStr, newTimeStr)
+      }
+    } catch {
+      onChange(newDateStr, newTimeStr)
+    }
   }
 
-  const handleScheduleMode = () => {
-    setMode('schedule')
-    if (!dateValue) {
-      onChange(todayISO, timeValue || '09:00')
-    }
-  }
-
-  // Quick Date presets generation (Today, Tomorrow, +2, +3, +4 days)
+  // Quick Date presets generation (Starts from earliest allowed date)
   const quickDays = Array.from({ length: 4 }).map((_, idx) => {
-    const d = new Date()
+    const d = new Date(earliestAllowed)
     d.setDate(d.getDate() + idx)
     const iso = formatDateISO(d)
+    const todayISO = formatDateISO(now)
+    const tomorrowISO = formatDateISO(new Date(now.getTime() + 86400000))
+
     let label = ''
-    if (idx === 0) label = 'Today'
-    else if (idx === 1) label = 'Tomorrow'
+    if (iso === todayISO) label = 'Today'
+    else if (iso === tomorrowISO) label = 'Tomorrow'
     else label = d.toLocaleDateString('en-US', { weekday: 'short' })
 
     return {
@@ -120,65 +152,77 @@ export default function DateTimePicker({ dateValue, timeValue, onChange }) {
     }
   })
 
-  // Quick Time presets
+  // Quick Time presets (Filtered to only show slots >= 4 hours ahead)
   const getQuickTimePresets = () => {
-    const isToday = dateValue === todayISO
-    if (isToday) {
-      const presets = []
-      const currentHour = now.getHours()
+    const selectedDate = dateValue || earliestISO
+    const isEarliestDay = selectedDate === earliestISO
+    const presets = []
 
-      // +15m
-      const t15 = new Date(now.getTime() + 15 * 60000)
+    if (isEarliestDay) {
+      // +4 hours (Earliest allowed)
       presets.push({
-        label: '+15 mins',
-        time: formatTimeISO(t15.getHours(), Math.ceil(t15.getMinutes() / 5) * 5 % 60)
+        label: `+4h (${earliestAllowed.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })})`,
+        time: formatTimeISO(earliestAllowed.getHours(), earliestAllowed.getMinutes())
       })
 
-      // +30m
-      const t30 = new Date(now.getTime() + 30 * 60000)
+      // +5 hours
+      const t5 = new Date(earliestAllowed.getTime() + 60 * 60000)
       presets.push({
-        label: '+30 mins',
-        time: formatTimeISO(t30.getHours(), Math.ceil(t30.getMinutes() / 5) * 5 % 60)
+        label: `+5h (${t5.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })})`,
+        time: formatTimeISO(t5.getHours(), t5.getMinutes())
       })
 
-      // +1 hr
-      const t60 = new Date(now.getTime() + 60 * 60000)
+      // +6 hours
+      const t6 = new Date(earliestAllowed.getTime() + 120 * 60000)
       presets.push({
-        label: '+1 hour',
-        time: formatTimeISO(t60.getHours(), Math.ceil(t60.getMinutes() / 5) * 5 % 60)
+        label: `+6h (${t6.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })})`,
+        time: formatTimeISO(t6.getHours(), t6.getMinutes())
       })
 
-      // Contextual popular slots later today
-      if (currentHour < 12) presets.push({ label: 'Lunch (1:00 PM)', time: '13:00' })
-      if (currentHour < 17) presets.push({ label: 'Evening (5:30 PM)', time: '17:30' })
-      if (currentHour < 20) presets.push({ label: 'Night (8:30 PM)', time: '20:30' })
+      // Popular fixed slots that fall after the 4-hour threshold today
+      const slots = [
+        { label: 'Morning (08:30 AM)', time: '08:30' },
+        { label: 'Mid-day (11:30 AM)', time: '11:30' },
+        { label: 'Afternoon (02:30 PM)', time: '14:30' },
+        { label: 'Evening (06:00 PM)', time: '18:00' },
+        { label: 'Night (09:30 PM)', time: '21:30' }
+      ]
+
+      slots.forEach(slot => {
+        const [sh, sm] = slot.time.split(':').map(Number)
+        const slotDate = new Date(earliestAllowed)
+        slotDate.setHours(sh, sm, 0, 0)
+        if (slotDate.getTime() >= earliestAllowed.getTime()) {
+          presets.push(slot)
+        }
+      })
 
       return presets
     } else {
       return [
         { label: 'Morning (08:30 AM)', time: '08:30' },
-        { label: 'Mid-day (11:00 AM)', time: '11:00' },
+        { label: 'Mid-day (11:30 AM)', time: '11:30' },
         { label: 'Afternoon (02:30 PM)', time: '14:30' },
         { label: 'Evening (06:00 PM)', time: '18:00' },
-        { label: 'Night (09:00 PM)', time: '21:00' }
+        { label: 'Night (09:30 PM)', time: '21:30' }
       ]
     }
   }
 
-  // Time Changer Helpers
+  // Time Changer Helpers with 4-hour protection
   const handleHourChange = (newHour) => {
     const t = to24h(newHour, minutes, period)
-    onChange(dateValue || todayISO, t)
+    setSafeDateTime(dateValue || earliestISO, t)
   }
 
   const handleMinuteChange = (newMin) => {
     const t = to24h(hour12, newMin, period)
-    onChange(dateValue || todayISO, t)
+    setSafeDateTime(dateValue || earliestISO, t)
   }
 
   const handlePeriodChange = (newPeriod) => {
     const t = to24h(hour12, minutes, newPeriod)
-    onChange(dateValue || todayISO, t)
+    setSafeDateTime(dateValue || earliestISO, t)
   }
 
   // Calendar matrix generator
@@ -211,7 +255,7 @@ export default function DateTimePicker({ dateValue, timeValue, onChange }) {
   const selectCustomDate = (day) => {
     const selected = new Date(calYear, calMonth, day)
     const iso = formatDateISO(selected)
-    onChange(iso, timeValue || '09:00')
+    setSafeDateTime(iso, timeValue || earliestTimeStr)
     setShowCalendar(false)
   }
 
@@ -227,17 +271,15 @@ export default function DateTimePicker({ dateValue, timeValue, onChange }) {
       const diffMins = Math.round(diffMs / 60000)
 
       let relativeText = ''
-      if (diffMins <= 0 && diffMins > -15) {
-        relativeText = '⚡ Pickup Right Now'
-      } else if (diffMins > 0 && diffMins < 60) {
-        relativeText = `⏱️ In ${diffMins} min${diffMins > 1 ? 's' : ''}`
-      } else if (diffMins >= 60 && diffMins < 1440) {
+      if (diffMins >= 60 && diffMins < 1440) {
         const hrs = Math.floor(diffMins / 60)
         const remMins = diffMins % 60
         relativeText = `⏱️ In ${hrs} hr${hrs > 1 ? 's' : ''} ${remMins > 0 ? `${remMins}m` : ''}`
       } else if (diffMins >= 1440) {
         const days = Math.floor(diffMins / 1440)
         relativeText = `📅 In ${days} day${days > 1 ? 's' : ''}`
+      } else if (diffMins > 0) {
+        relativeText = `⏱️ In ${diffMins} min${diffMins > 1 ? 's' : ''}`
       }
 
       const dateDisplay = target.toLocaleDateString('en-US', {
@@ -265,7 +307,7 @@ export default function DateTimePicker({ dateValue, timeValue, onChange }) {
     <fieldset className="datetime-scheduler full-width">
       <legend className="scheduler-legend">
         <span>Ride Schedule</span>
-        <span className="scheduler-badge">Smart Pickup</span>
+        <span className="scheduler-badge">Advance Booking (Min. 4 hrs)</span>
       </legend>
 
       {/* Mode Switcher */}
@@ -283,214 +325,197 @@ export default function DateTimePicker({ dateValue, timeValue, onChange }) {
               <strong>Ride Now</strong>
               <span className="tab-coming-soon-badge">Coming Soon</span>
             </span>
-            {/* <small>Feature Coming Soon</small> */}
           </span>
         </button>
         <button
           type="button"
           className="scheduler-tab active"
-          onClick={handleScheduleMode}
+          onClick={() => setMode('schedule')}
         >
           <span className="tab-icon">📅</span>
           <span className="tab-text">
             <strong>Schedule Ahead</strong>
-            <small>Choose date & time</small>
+            <small>Min. 4 hours in advance</small>
           </span>
         </button>
       </div>
 
-      {mode === 'now' ? (
-        /* Ride Now Quick Confirmation State */
-        <div className="ride-now-banner">
-          <div className="banner-icon-ring">
-            <span className="pulse-dot" />
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
-          </div>
-          <div className="banner-info">
-            <strong>Instant Driver Dispatch</strong>
-            <p>Your driver will be scheduled for immediate pickup at <b>{summary.timeDisplay}</b> ({summary.dateDisplay}).</p>
-          </div>
-          <button
-            type="button"
-            className="btn-switch-schedule"
-            onClick={handleScheduleMode}
-          >
-            Customize Time
-          </button>
+      {/* 4-Hour Notice Guideline Banner */}
+      <div className="lead-time-notice">
+        <span className="lead-notice-icon">⏱️</span>
+        <div className="lead-notice-text">
+          <strong>4-Hour Advance Scheduling:</strong> Earliest available pickup is <b>{earliestAllowed.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</b> ({earliestAllowed.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}).
         </div>
-      ) : (
-        /* Schedule For Later Controls */
-        <div className="schedule-controls-wrapper">
-          {/* 1. Date Selection Section */}
-          <div className="scheduler-subpanel">
-            <div className="subpanel-header">
-              <label className="subpanel-title">
-                <span className="subpanel-icon">🗓️</span> Pickup Date
-              </label>
-              {isCustomDateSelected && (
-                <span className="custom-date-tag">Custom: {dateValue}</span>
+      </div>
+
+      {/* Schedule For Later Controls */}
+      <div className="schedule-controls-wrapper">
+        {/* 1. Date Selection Section */}
+        <div className="scheduler-subpanel">
+          <div className="subpanel-header">
+            <label className="subpanel-title">
+              <span className="subpanel-icon">🗓️</span> Pickup Date
+            </label>
+            {isCustomDateSelected && (
+              <span className="custom-date-tag">Custom: {dateValue}</span>
+            )}
+          </div>
+
+          <div className="date-chips-grid">
+            {quickDays.map((d) => {
+              const isSelected = dateValue === d.iso
+              return (
+                <button
+                  key={d.iso}
+                  type="button"
+                  className={`date-chip ${isSelected ? 'selected' : ''}`}
+                  onClick={() => setSafeDateTime(d.iso, timeValue || earliestTimeStr)}
+                >
+                  <span className="chip-weekday">{d.label}</span>
+                  <strong className="chip-daynum">{d.dayNum}</strong>
+                  <span className="chip-month">{d.monthShort}</span>
+                </button>
+              )
+            })}
+
+            {/* Custom Date Popover Trigger */}
+            <div className="custom-calendar-container" ref={calendarRef}>
+              <button
+                type="button"
+                className={`date-chip custom-chip ${isCustomDateSelected || showCalendar ? 'selected' : ''}`}
+                onClick={() => setShowCalendar(!showCalendar)}
+                aria-label="Pick custom date"
+              >
+                <span className="chip-weekday">More</span>
+                <span className="custom-cal-icon">📅</span>
+                <span className="chip-month">Calendar</span>
+              </button>
+
+              {/* Interactive Custom Calendar Popup */}
+              {showCalendar && (
+                <div className="calendar-popover">
+                  <div className="cal-nav">
+                    <button type="button" className="cal-nav-btn" onClick={handlePrevMonth}>‹</button>
+                    <span className="cal-month-title">
+                      {MONTH_NAMES[calMonth]} {calYear}
+                    </span>
+                    <button type="button" className="cal-nav-btn" onClick={handleNextMonth}>›</button>
+                  </div>
+
+                  <div className="cal-grid-header">
+                    {DAY_LABELS.map(dl => <span key={dl}>{dl}</span>)}
+                  </div>
+
+                  <div className="cal-days-grid">
+                    {Array.from({ length: firstDay }).map((_, i) => (
+                      <span key={`empty-${i}`} className="cal-day-empty" />
+                    ))}
+
+                    {Array.from({ length: daysInMonth }).map((_, i) => {
+                      const dayNumber = i + 1
+                      const cellDate = new Date(calYear, calMonth, dayNumber)
+                      const cellISO = formatDateISO(cellDate)
+                      const isPast = cellISO < earliestISO
+                      const isSelected = dateValue === cellISO
+                      const isToday = cellISO === formatDateISO(now)
+
+                      return (
+                        <button
+                          key={dayNumber}
+                          type="button"
+                          disabled={isPast}
+                          className={`cal-day-btn ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''} ${isPast ? 'disabled' : ''}`}
+                          onClick={() => selectCustomDate(dayNumber)}
+                        >
+                          {dayNumber}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
               )}
             </div>
+          </div>
+        </div>
 
-            <div className="date-chips-grid">
-              {quickDays.map((d) => {
-                const isSelected = dateValue === d.iso
-                return (
-                  <button
-                    key={d.iso}
-                    type="button"
-                    className={`date-chip ${isSelected ? 'selected' : ''}`}
-                    onClick={() => onChange(d.iso, timeValue || '09:00')}
-                  >
-                    <span className="chip-weekday">{d.label}</span>
-                    <strong className="chip-daynum">{d.dayNum}</strong>
-                    <span className="chip-month">{d.monthShort}</span>
-                  </button>
-                )
-              })}
-
-              {/* Custom Date Popover Trigger */}
-              <div className="custom-calendar-container" ref={calendarRef}>
-                <button
-                  type="button"
-                  className={`date-chip custom-chip ${isCustomDateSelected || showCalendar ? 'selected' : ''}`}
-                  onClick={() => setShowCalendar(!showCalendar)}
-                  aria-label="Pick custom date"
-                >
-                  <span className="chip-weekday">More</span>
-                  <span className="custom-cal-icon">📅</span>
-                  <span className="chip-month">Calendar</span>
-                </button>
-
-                {/* Interactive Custom Calendar Popup */}
-                {showCalendar && (
-                  <div className="calendar-popover">
-                    <div className="cal-nav">
-                      <button type="button" className="cal-nav-btn" onClick={handlePrevMonth}>‹</button>
-                      <span className="cal-month-title">
-                        {MONTH_NAMES[calMonth]} {calYear}
-                      </span>
-                      <button type="button" className="cal-nav-btn" onClick={handleNextMonth}>›</button>
-                    </div>
-
-                    <div className="cal-grid-header">
-                      {DAY_LABELS.map(dl => <span key={dl}>{dl}</span>)}
-                    </div>
-
-                    <div className="cal-days-grid">
-                      {Array.from({ length: firstDay }).map((_, i) => (
-                        <span key={`empty-${i}`} className="cal-day-empty" />
-                      ))}
-
-                      {Array.from({ length: daysInMonth }).map((_, i) => {
-                        const dayNumber = i + 1
-                        const cellDate = new Date(calYear, calMonth, dayNumber)
-                        const cellISO = formatDateISO(cellDate)
-                        const isPast = cellISO < todayISO
-                        const isSelected = dateValue === cellISO
-                        const isToday = cellISO === todayISO
-
-                        return (
-                          <button
-                            key={dayNumber}
-                            type="button"
-                            disabled={isPast}
-                            className={`cal-day-btn ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''} ${isPast ? 'disabled' : ''}`}
-                            onClick={() => selectCustomDate(dayNumber)}
-                          >
-                            {dayNumber}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+        {/* 2. Time Selection Section */}
+        <div className="scheduler-subpanel">
+          <div className="subpanel-header">
+            <label className="subpanel-title">
+              <span className="subpanel-icon">⏰</span> Pickup Time
+            </label>
+            <span className="current-time-badge">{summary.timeDisplay}</span>
           </div>
 
-          {/* 2. Time Selection Section */}
-          <div className="scheduler-subpanel">
-            <div className="subpanel-header">
-              <label className="subpanel-title">
-                <span className="subpanel-icon">⏰</span> Pickup Time
-              </label>
-              <span className="current-time-badge">{summary.timeDisplay}</span>
+          {/* Quick Time Preset Pills */}
+          <div className="time-presets-scroller">
+            {getQuickTimePresets().map((preset, idx) => (
+              <button
+                key={idx}
+                type="button"
+                className={`time-preset-pill ${timeValue === preset.time ? 'active' : ''}`}
+                onClick={() => setSafeDateTime(dateValue || earliestISO, preset.time)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tactile Precise Time Controller */}
+          <div className="tactile-time-box">
+            <div className="time-dial-col">
+              <span className="dial-label">Hour</span>
+              <select
+                className="time-select"
+                value={hour12}
+                onChange={(e) => handleHourChange(Number(e.target.value))}
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map(h => (
+                  <option key={h} value={h}>{pad(h)}</option>
+                ))}
+              </select>
             </div>
 
-            {/* Quick Time Preset Pills */}
-            <div className="time-presets-scroller">
-              {getQuickTimePresets().map((preset, idx) => (
+            <div className="time-dial-col time-separator-col">
+              <span className="dial-label">&nbsp;</span>
+              <span className="time-colon">:</span>
+            </div>
+
+            <div className="time-dial-col">
+              <span className="dial-label">Minute</span>
+              <select
+                className="time-select"
+                value={Math.floor(minutes / 5) * 5}
+                onChange={(e) => handleMinuteChange(Number(e.target.value))}
+              >
+                {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => (
+                  <option key={m} value={m}>{pad(m)}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="time-dial-col time-period-col">
+              <span className="dial-label">Period</span>
+              <div className="period-toggle-group">
                 <button
-                  key={idx}
                   type="button"
-                  className={`time-preset-pill ${timeValue === preset.time ? 'active' : ''}`}
-                  onClick={() => onChange(dateValue || todayISO, preset.time)}
+                  className={`period-btn ${period === 'AM' ? 'active' : ''}`}
+                  onClick={() => handlePeriodChange('AM')}
                 >
-                  {preset.label}
+                  AM
                 </button>
-              ))}
-            </div>
-
-            {/* Tactile Precise Time Controller */}
-            <div className="tactile-time-box">
-              <div className="time-dial-col">
-                <span className="dial-label">Hour</span>
-                <select
-                  className="time-select"
-                  value={hour12}
-                  onChange={(e) => handleHourChange(Number(e.target.value))}
+                <button
+                  type="button"
+                  className={`period-btn ${period === 'PM' ? 'active' : ''}`}
+                  onClick={() => handlePeriodChange('PM')}
                 >
-                  {Array.from({ length: 12 }, (_, i) => i + 1).map(h => (
-                    <option key={h} value={h}>{pad(h)}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="time-dial-col time-separator-col">
-                <span className="dial-label">&nbsp;</span>
-                <span className="time-colon">:</span>
-              </div>
-
-              <div className="time-dial-col">
-                <span className="dial-label">Minute</span>
-                <select
-                  className="time-select"
-                  value={Math.floor(minutes / 5) * 5}
-                  onChange={(e) => handleMinuteChange(Number(e.target.value))}
-                >
-                  {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => (
-                    <option key={m} value={m}>{pad(m)}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="time-dial-col time-period-col">
-                <span className="dial-label">Period</span>
-                <div className="period-toggle-group">
-                  <button
-                    type="button"
-                    className={`period-btn ${period === 'AM' ? 'active' : ''}`}
-                    onClick={() => handlePeriodChange('AM')}
-                  >
-                    AM
-                  </button>
-                  <button
-                    type="button"
-                    className={`period-btn ${period === 'PM' ? 'active' : ''}`}
-                    onClick={() => handlePeriodChange('PM')}
-                  >
-                    PM
-                  </button>
-                </div>
+                  PM
+                </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
       {/* 3. Luxury Live Summary Preview Card */}
       <div className="scheduler-summary-card">

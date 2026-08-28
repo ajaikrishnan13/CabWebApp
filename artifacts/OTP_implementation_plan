@@ -1,0 +1,48 @@
+# Plan: Mobile Number & OTP Authentication
+
+Replace the email and password login/registration with an authentic **Mobile Number + OTP** authentication system featuring role selection (Rider / Driver), 6-digit OTP verification, countdown timer, and simulated SMS notification delivery at zero cost.
+
+---
+
+## Proposed Changes
+
+### 1. Auth Flow Engine (`src/database.js`)
+- Add helper methods for Phone OTP:
+  - `auth.sendPhoneOtp(phone)`: Generates a secure 6-digit code, saves it with a 5-minute expiry, and returns the verification code for in-app delivery.
+  - `auth.verifyPhoneOtp(phone, otp, role, userDetails)`: Verifies the code and establishes the user session using Supabase Auth (mapped seamlessly to `${cleanPhone}@nammadriver.app` with `user_metadata: { phone, role, name, vehicleNumber, vehicleModel }`).
+  - Supports both existing accounts and new registrations seamlessly.
+
+---
+
+### 2. Mobile OTP User Interface (`src/pages/Auth.jsx`)
+- **Step 1: Mobile & Details Entry**:
+  - Role switcher: `🧑 Rider` vs `🚗 Driver`.
+  - Country code badge (`🇮🇳 +91`) with 10-digit mobile number input.
+  - Name and vehicle details (for drivers).
+  - Primary button: **"Get Verification Code"**.
+- **Step 2: 6-Digit OTP Verification**:
+  - Displays target phone: `Enter 6-digit code sent to +91 XXXXX XXXXX`.
+  - 6 individual digit input boxes with auto-tabbing and paste support.
+  - 45s resend timer.
+  - **Simulated Push SMS Banner**: Slides down smoothly from the top mimicking a real phone SMS notification (`💬 Messages: Your Namma Driver verification code is 482910`) with an instant **"Auto-Fill"** button.
+
+---
+
+### 3. Styling & Micro-Interactions (`src/styles.css`)
+- Clean phone input group with `+91` flag badge.
+- Segmented 6-digit OTP inputs with glowing active state.
+- Floating SMS notification toast with slide-down animation.
+
+---
+
+## Verification Plan
+
+### Automated Checks
+- Run `npm run build` to confirm zero compilation errors.
+
+### Manual Verification Flow
+1. Open the app on the sign-in page.
+2. Enter a 10-digit mobile number as a **Rider**, click **Get OTP**.
+3. Verify simulated SMS drop-down banner appears with the 6-digit code.
+4. Click **Auto-fill** or type the code, verify successful login into Rider Home.
+5. Sign out and test the same flow as a **Driver** with vehicle details, verifying transition directly into the **Driver Partner Portal**.

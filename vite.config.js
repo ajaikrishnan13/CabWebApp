@@ -8,7 +8,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           supabase: ['@supabase/supabase-js'],
-          leaflet: ['leaflet'],
           react: ['react', 'react-dom']
         }
       }
