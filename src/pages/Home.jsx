@@ -488,6 +488,52 @@ export default function Home({ user, onSignOut }) {
     setStepMode('ride_options')
   }
 
+  const handleProceedToRide = async () => {
+    if (!to || !to.trim()) {
+      setFieldInlineError({ field: 'to', message: 'Please enter a destination to request a ride.' })
+      document.getElementById('rapido-destination-input')?.focus()
+      return
+    }
+
+    if (!fromCoords) {
+      setFieldInlineError({ field: 'from', message: 'Detecting your pickup location... please wait or tap GPS.' })
+      return
+    }
+
+    // If destination coordinates are already resolved, proceed straight to ride options
+    if (toCoords) {
+      setStepMode('ride_options')
+      return
+    }
+
+    // Otherwise geocode the destination address entered
+    setToLoading(true)
+    try {
+      if (toSuggestions.length > 0) {
+        await selectToSuggestion(toSuggestions[0])
+        return
+      }
+      const suggestions = await fetchSuggestions(to, fromCoords)
+      if (suggestions && suggestions.length > 0) {
+        await selectToSuggestion(suggestions[0])
+      } else {
+        const coords = await geocodeAddress(to)
+        if (coords) {
+          toCoordsRef.current = coords
+          setToCoords(coords)
+          setStepMode('ride_options')
+        } else {
+          setFieldInlineError({ field: 'to', message: 'Could not find that location. Please pick on map.' })
+        }
+      }
+    } catch (err) {
+      console.warn('Geocoding error', err)
+      setFieldInlineError({ field: 'to', message: 'Could not find that location. Please pick on map.' })
+    } finally {
+      setToLoading(false)
+    }
+  }
+
   const openMapPicker = (type) => {
     setMapPickerType(type)
     setMapPickerOpen(true)
@@ -989,7 +1035,7 @@ export default function Home({ user, onSignOut }) {
                   </div>
                 </div>
 
-                {/* Hero "Where are you going?" Destination Search Box */}
+                {/* 2. Destination Search Box (AFTER pickup) */}
                 <div className="rapido-search-box-wrap">
                   <div className="rapido-search-input-inner">
                     <span className="rapido-search-icon" aria-hidden="true">🔍</span>
@@ -1000,6 +1046,12 @@ export default function Home({ user, onSignOut }) {
                       placeholder="Where are you going?"
                       value={to}
                       onChange={e => handleToInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          handleProceedToRide()
+                        }
+                      }}
                       onFocus={() => {
                         if (to && toSuggestions.length === 0) {
                           fetchSuggestions(to).then(setToSuggestions)
@@ -1078,6 +1130,55 @@ export default function Home({ user, onSignOut }) {
                     <span>🗺️</span> Pick on Map
                   </button>
                 </div>
+
+                {/* 3. Schedule Ride Time Strip (AFTER destination input) */}
+                <div className="rapido-schedule-home-strip">
+                  <button
+                    type="button"
+                    className={`btn-toggle-schedule-home ${showScheduler ? 'active' : ''}`}
+                    onClick={() => setShowScheduler(prev => !prev)}
+                    title="Set scheduled ride date & time"
+                  >
+                    <div className="schedule-home-left">
+                      <span className="schedule-home-icon">🗓️</span>
+                      <span>{datetime ? `Scheduled for: ${datetime.replace('T', ' ')}` : (serviceType === 'Scheduled' ? 'Set Scheduled Date & Time' : 'Schedule for later (Optional)')}</span>
+                    </div>
+                    <span className="schedule-home-arrow">{showScheduler ? '▲ Close' : (datetime ? '✎ Edit' : '+ Set Time')}</span>
+                  </button>
+                  {showScheduler && (
+                    <div className="rapido-scheduler-box" style={{ marginTop: '8px' }}>
+                      <DateTimePicker
+                        dateValue={dateValue}
+                        timeValue={timeValue}
+                        onChange={updateDateTime}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. Prominent Request Ride Submit Button */}
+                <button
+                  type="button"
+                  className="btn-rapido-search-submit"
+                  onClick={handleProceedToRide}
+                  disabled={toLoading || fromLoading}
+                >
+                  {toLoading ? (
+                    <span className="confirm-btn-loading">
+                      <span className="btn-spinner" /> Finding Route & Fares...
+                    </span>
+                  ) : datetime ? (
+                    <>
+                      <span className="search-submit-text">🗓️ Request Scheduled Ride</span>
+                      <span className="search-submit-arrow">➔</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="search-submit-text">🚗 Request Ride / View Fares</span>
+                      <span className="search-submit-arrow">➔</span>
+                    </>
+                  )}
+                </button>
 
                 {/* Upcoming Scheduled Rides Pill Banner (if any) */}
                 {upcomingBookings.length > 0 && (
