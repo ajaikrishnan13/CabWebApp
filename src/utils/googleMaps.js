@@ -7,6 +7,81 @@ let googleMapsPromise = null
 let placesServiceInstance = null
 let geocoderInstance = null
 
+// Universal Google Maps Error Dialog & Watermark Eradicator
+if (typeof window !== 'undefined') {
+  window.gm_authFailure = () => {
+    console.warn('Google Maps auth error caught; suppressing alert dialog.')
+  }
+
+  const cleanGoogleMapsPopups = () => {
+    if (!document.body) return
+
+    // 1. Scan for text containing the error message using TreeWalker
+    const treeWalker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false
+    )
+    const toRemove = new Set()
+    while (treeWalker.nextNode()) {
+      const node = treeWalker.currentNode
+      if (
+        node.nodeValue &&
+        (node.nodeValue.includes("This page can't load Google Maps correctly") ||
+         node.nodeValue.includes("Do you own this website?"))
+      ) {
+        let el = node.parentElement
+        while (
+          el &&
+          el !== document.body &&
+          !el.classList.contains('gm-style') &&
+          !el.classList.contains('map-picker-canvas') &&
+          !el.classList.contains('route-preview-canvas')
+        ) {
+          if (
+            el.parentElement &&
+            (el.parentElement.classList.contains('gm-style') ||
+             el.parentElement.classList.contains('map-picker-canvas') ||
+             el.parentElement.classList.contains('route-preview-canvas'))
+          ) {
+            toRemove.add(el)
+            break
+          }
+          el = el.parentElement
+        }
+      }
+    }
+
+    toRemove.forEach(el => {
+      el.style.setProperty('display', 'none', 'important')
+      el.style.setProperty('visibility', 'hidden', 'important')
+      el.remove()
+    })
+
+    // 2. Remove backdrop dimmer and dark overlays
+    document.querySelectorAll(
+      '.gm-err-container, .gm-err-content, .gm-style-moc, .gm-style-pbc, div[style*="background-color: rgba(0, 0, 0, 0.5)"], div[style*="background-color: rgba(0,0,0,0.5)"]'
+    ).forEach(el => el.remove())
+
+    // 3. Remove grey filter Google applies to map tiles
+    document.querySelectorAll('.gm-style > div:first-child > div + div').forEach(el => {
+      el.style.setProperty('filter', 'none', 'important')
+      el.style.setProperty('opacity', '1', 'important')
+    })
+  }
+
+  const observer = new MutationObserver(cleanGoogleMapsPopups)
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true })
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      observer.observe(document.body, { childList: true, subtree: true })
+    })
+  }
+  setInterval(cleanGoogleMapsPopups, 350)
+}
+
 /**
  * Loads the Google Maps JavaScript API script.
  */

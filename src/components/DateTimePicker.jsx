@@ -140,7 +140,7 @@ export default function DateTimePicker({ dateValue, timeValue, onChange }) {
 
     let label = ''
     if (iso === todayISO) label = 'Today'
-    else if (iso === tomorrowISO) label = 'Tomorrow'
+    else if (iso === tomorrowISO) label = 'Tmrw'
     else label = d.toLocaleDateString('en-US', { weekday: 'short' })
 
     return {
@@ -517,21 +517,25 @@ export default function DateTimePicker({ dateValue, timeValue, onChange }) {
         </div>
       </div>
 
-      {/* 3. Luxury Live Summary Preview Card */}
+      {/* 3. Modern Redesigned Selected Timing Card */}
       <div className="scheduler-summary-card">
         <div className="summary-left">
-          <div className="summary-check-icon">✓</div>
+          <div className="summary-icon-badge">
+            <span>🗓️</span>
+          </div>
           <div className="summary-details">
-            <div className="summary-label">Selected Timing</div>
+            <span className="summary-label">Confirmed Schedule</span>
             <div className="summary-datetime-line">
-              <span className="highlight-date">{summary.dateDisplay}</span>
-              <span className="summary-dot">•</span>
-              <span className="highlight-time">{summary.timeDisplay}</span>
+              <strong className="summary-date-text">{summary.dateDisplay}</strong>
+              <span className="summary-separator">•</span>
+              <span className="summary-time-pill">{summary.timeDisplay}</span>
             </div>
           </div>
         </div>
         {summary.relativeText && (
-          <span className="summary-countdown-pill">{summary.relativeText}</span>
+          <div className="summary-countdown-pill">
+            {summary.relativeText}
+          </div>
         )}
       </div>
     </fieldset>

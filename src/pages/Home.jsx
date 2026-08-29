@@ -1,12 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { auth, database } from '../database'
 import DateTimePicker from '../components/DateTimePicker'
 import BirthdayPicker from '../components/BirthdayPicker'
 import MapPickerModal from '../components/MapPickerModal'
 import TripHistoryView from '../components/TripHistoryView'
+import RoutePreviewMap from '../components/RoutePreviewMap'
 import { calculateEstimatedFare, VEHICLE_RATES } from '../utils/fareCalculator'
 import { getGoogleDirections, isGoogleMapsConfigured, searchGooglePlaces, geocodePlaceId, reverseGeocodeGoogle } from '../utils/googleMaps'
 import logo from '../assets/logo.png'
+import logoWhite from '../assets/logo-white.png'
 import sedanImage from '../assets/sedan.png'
 import suvImage from '../assets/suv.png'
 import luxuryImage from '../assets/luxury.png'
@@ -79,7 +81,7 @@ export default function Home({ user, onSignOut }) {
   const [dateValue, setDateValue] = useState('')
   const [timeValue, setTimeValue] = useState('')
   const [carType, setCarType] = useState('Sedan')
-  const [serviceType, setServiceType] = useState('Point-to-Point')
+  const [serviceType, setServiceType] = useState('Scheduled')
   const [loading, setLoading] = useState(false)
   const [bookingSuccess, setBookingSuccess] = useState(false)
   const [bookingError, setBookingError] = useState(null)
@@ -91,9 +93,73 @@ export default function Home({ user, onSignOut }) {
   const [fieldInlineError, setFieldInlineError] = useState(null)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [activeView, setActiveView] = useState('home') // 'home' | 'history'
+  const [stepMode, setStepMode] = useState('search') // 'search' | 'ride_options'
+  const [showScheduler, setShowScheduler] = useState(false)
+
+  const hasRoute = Boolean(fromCoords && toCoords && routeInfo && !routeInfo.error)
+  const upcomingBookings = bookings.filter(b => {
+    if (!b.datetime) return false
+    const tripDate = new Date(b.datetime.replace(' ', 'T'))
+    return tripDate > new Date() && b.status !== 'cancelled' && b.status !== 'completed'
+  })
 
   const fromCoordsRef = useRef(null)
   const toCoordsRef = useRef(null)
+
+  // Intelligent Pickup Location Detection (Saved preference -> Live GPS auto-detect)
+  useEffect(() => {
+    let isMounted = true
+
+    // 1. Check if user has a previously chosen pickup saved in localStorage
+    try {
+      const savedPickup = localStorage.getItem('nd_last_pickup_addr')
+      const savedCoordsStr = localStorage.getItem('nd_last_pickup_coords')
+      if (savedPickup && savedCoordsStr) {
+        const parsedCoords = JSON.parse(savedCoordsStr)
+        if (Array.isArray(parsedCoords) && parsedCoords.length === 2) {
+          setFrom(savedPickup)
+          setFromCoords(parsedCoords)
+          fromCoordsRef.current = parsedCoords
+        }
+      }
+    } catch {}
+
+    // 2. Automatically request live device GPS to locate user accurately
+    if (navigator.geolocation) {
+      setFromLoading(true)
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          if (!isMounted) return
+          const coords = [pos.coords.latitude, pos.coords.longitude]
+          fromCoordsRef.current = coords
+          setFromCoords(coords)
+          try {
+            const addr = await reverseGeocodeGoogle(coords)
+            if (addr && isMounted) {
+              setFrom(addr)
+              try {
+                localStorage.setItem('nd_last_pickup_addr', addr)
+                localStorage.setItem('nd_last_pickup_coords', JSON.stringify(coords))
+              } catch {}
+            }
+          } catch {
+            if (isMounted) setFrom('Current Location')
+          } finally {
+            if (isMounted) setFromLoading(false)
+          }
+        },
+        (err) => {
+          console.log('Auto-GPS check notice:', err.message)
+          if (isMounted) setFromLoading(false)
+        },
+        { enableHighAccuracy: true, timeout: 7000, maximumAge: 60000 }
+      )
+    }
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
   const debounceFromRef = useRef(null)
   const debounceToRef = useRef(null)
   const [fromLoading, setFromLoading] = useState(false)
@@ -105,6 +171,43 @@ export default function Home({ user, onSignOut }) {
   const [mapPickerOpen, setMapPickerOpen] = useState(false)
   const [mapPickerType, setMapPickerType] = useState('pickup')
   const [gpsLoading, setGpsLoading] = useState(false)
+
+  // App Settings & Dark Mode State
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nd_theme')
+      return saved ? saved === 'dark' : false
+    } catch {
+      return false
+    }
+  })
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  useEffect(() => {
+    try {
+      if (darkMode) {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        localStorage.setItem('nd_theme', 'dark')
+        document.documentElement.style.backgroundColor = '#0b1120'
+        document.body.style.backgroundColor = '#0b1120'
+        const meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.content = '#0b1120'
+      } else {
+        document.documentElement.setAttribute('data-theme', 'light')
+        localStorage.setItem('nd_theme', 'light')
+        document.documentElement.style.backgroundColor = '#f7f9fc'
+        document.body.style.backgroundColor = '#f7f9fc'
+        const meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.content = '#0b3977'
+      }
+    } catch {
+      // ignore
+    }
+  }, [darkMode])
+
+  const handleToggleDarkMode = () => {
+    setDarkMode(prev => !prev)
+  }
 
   // Sticky header scroll state
   const [headerScrolled, setHeaderScrolled] = useState(false)
@@ -122,19 +225,29 @@ export default function Home({ user, onSignOut }) {
   const [profileMessage, setProfileMessage] = useState(null)
   const [profileSaved, setProfileSaved] = useState(false)
 
-  // Prevent background scrolling when any modal is open
-  const isAnyModalOpen = profileOpen || mapPickerOpen || Boolean(selectedReceipt)
+  // Prevent background scrolling when any modal is open, and guarantee clean release
+  const isAnyModalOpen = profileOpen || mapPickerOpen || Boolean(selectedReceipt) || settingsOpen
   useEffect(() => {
     if (isAnyModalOpen) {
       document.body.classList.add('modal-open')
-      const originalOverflow = document.body.style.overflow
       document.body.style.overflow = 'hidden'
-      return () => {
-        document.body.classList.remove('modal-open')
-        document.body.style.overflow = originalOverflow
-      }
+    } else {
+      document.body.classList.remove('modal-open')
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.classList.remove('modal-open')
+      document.body.style.overflow = ''
     }
   }, [isAnyModalOpen])
+
+  // Always reset scroll state when Home unmounts
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove('modal-open')
+      document.body.style.overflow = ''
+    }
+  }, [])
 
   // Time-of-day greeting
   const getTimeGreeting = () => {
@@ -345,14 +458,16 @@ export default function Home({ user, onSignOut }) {
   }
 
   const selectToSuggestion = async (s) => {
-    setTo(s.display_name)
+    const mainAddr = s.main_text ? `${s.main_text}, ${s.secondary_text}` : s.display_name
+    setTo(mainAddr)
     setToSuggestions([])
     if (fieldInlineError?.field === 'to') setFieldInlineError(null)
 
     if (s.lat && s.lon) {
-      const coordinates = [s.lat, s.lon]
+      const coordinates = [parseFloat(s.lat), parseFloat(s.lon)]
       toCoordsRef.current = coordinates
       setToCoords(coordinates)
+      setStepMode('ride_options')
       return
     }
 
@@ -360,7 +475,17 @@ export default function Home({ user, onSignOut }) {
     if (coords) {
       toCoordsRef.current = coords
       setToCoords(coords)
+      setStepMode('ride_options')
     }
+  }
+
+  const handleQuickSelect = (name, coords) => {
+    setTo(name)
+    toCoordsRef.current = coords
+    setToCoords(coords)
+    setToSuggestions([])
+    if (fieldInlineError?.field === 'to') setFieldInlineError(null)
+    setStepMode('ride_options')
   }
 
   const openMapPicker = (type) => {
@@ -386,12 +511,17 @@ export default function Home({ user, onSignOut }) {
       setFromCoords(coords)
       setFromSuggestions([])
       setFromError(null)
+      try {
+        localStorage.setItem('nd_last_pickup_addr', readableAddress)
+        localStorage.setItem('nd_last_pickup_coords', JSON.stringify(coords))
+      } catch {}
     } else {
       setTo(readableAddress)
       toCoordsRef.current = coords
       setToCoords(coords)
       setToSuggestions([])
       setToError(null)
+      setStepMode('ride_options')
     }
   }
 
@@ -410,7 +540,12 @@ export default function Home({ user, onSignOut }) {
         setFromSuggestions([])
         try {
           const addr = await reverseGeocodeGoogle(coords)
-          setFrom(addr || `${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}`)
+          const finalAddr = addr || `${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}`
+          setFrom(finalAddr)
+          try {
+            localStorage.setItem('nd_last_pickup_addr', finalAddr)
+            localStorage.setItem('nd_last_pickup_coords', JSON.stringify(coords))
+          } catch {}
         } catch {
           setFrom(`${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}`)
         } finally {
@@ -503,95 +638,72 @@ export default function Home({ user, onSignOut }) {
   }
 
   const handleRequest = async (e) => {
-    e.preventDefault()
+    if (e) e.preventDefault()
     setBookingError(null)
 
     // 1. Validate Pickup Location
     if (!from || !from.trim()) {
-      setFieldInlineError({ field: 'from', message: 'Please enter or pick your pickup location to proceed.' })
-      const pickupEl = document.getElementById('pickup-location-input')
-      if (pickupEl) {
-        pickupEl.focus({ preventScroll: true })
-        pickupEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        pickupEl.classList.add('field-highlight-error')
-        setTimeout(() => pickupEl.classList.remove('field-highlight-error'), 2000)
-      }
+      setFieldInlineError({ field: 'from', message: 'Please enter or pick your pickup location.' })
+      setStepMode('search')
       return
     }
 
     // 2. Validate Drop-off Destination
     if (!to || !to.trim()) {
-      setFieldInlineError({ field: 'to', message: 'Please enter or pick your drop-off destination to proceed.' })
-      const toEl = document.getElementById('destination-location-input')
-      if (toEl) {
-        toEl.focus({ preventScroll: true })
-        toEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        toEl.classList.add('field-highlight-error')
-        setTimeout(() => toEl.classList.remove('field-highlight-error'), 2000)
-      }
+      setFieldInlineError({ field: 'to', message: 'Please enter your destination.' })
+      setStepMode('search')
       return
     }
 
-    // 3. Validate Ride Schedule Date & Time
-    if (!datetime) {
-      setFieldInlineError({ field: 'datetime', message: 'Please choose your pickup date and time schedule.' })
-      const schedEl = document.querySelector('.datetime-scheduler')
-      if (schedEl) {
-        schedEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        schedEl.classList.add('field-highlight-error')
-        setTimeout(() => schedEl.classList.remove('field-highlight-error'), 2000)
+    // 3. Date & time: If user explicitly entered datetime (e.g. Scheduled), check lead time
+    let rideDatetime = datetime
+    if (rideDatetime) {
+      const minLeadMs = 4 * 60 * 60 * 1000 - 60000 // 4 hours buffer
+      const bookingTimeMs = new Date(rideDatetime.replace(' ', 'T')).getTime()
+      if (bookingTimeMs < Date.now() + minLeadMs && serviceType === 'Scheduled') {
+        setFieldInlineError({ field: 'datetime', message: 'Scheduled rides must be booked at least 4 hours in advance.' })
+        setShowScheduler(true)
+        return
       }
-      return
+    } else {
+      // Instant ride defaults to current time
+      const now = new Date()
+      const pad = n => String(n).padStart(2, '0')
+      rideDatetime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
     }
 
-    const minLeadMs = 4 * 60 * 60 * 1000 - 60000 // 4 hours with grace buffer
-    const bookingTimeMs = new Date(datetime.replace(' ', 'T')).getTime()
-    if (bookingTimeMs < Date.now() + minLeadMs) {
-      setFieldInlineError({ field: 'datetime', message: 'Scheduled rides must be scheduled at least 4 hours in advance.' })
-      const schedEl = document.querySelector('.datetime-scheduler')
-      if (schedEl) {
-        schedEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        schedEl.classList.add('field-highlight-error')
-        setTimeout(() => schedEl.classList.remove('field-highlight-error'), 2000)
-      }
-      return
-    }
     setLoading(true)
     try {
       const newBooking = await database.addBooking({
         uid: user.id,
         name: user.user_metadata?.name || null,
         email: user.email,
-        datetime,
+        datetime: rideDatetime,
         from,
         to,
         fromCoords: fromCoords || null,
         toCoords: toCoords || null,
         carType,
         serviceType,
-        estimatedFare: estimatedFare?.formatted || null,
+        estimatedFare: estimatedFare?.formatted || getCarFare(carType),
         status: 'requested'
       })
       setBookingSuccess(true)
-      // reset form
+      setBookings(prev => [newBooking, ...prev])
+      // Reset destination for next ride
+      setTo('')
+      setToCoords(null)
+      toCoordsRef.current = null
+      setRouteInfo(null)
+      setGoogleDirectionsResult(null)
+      setStepMode('search')
+      setShowScheduler(false)
       setDatetime('')
       setDateValue('')
       setTimeValue('')
-      setFrom('')
-      setTo('')
-      fromCoordsRef.current = null
-      toCoordsRef.current = null
-      setFromCoords(null)
-      setToCoords(null)
-      setRouteInfo(null)
-      setRouteGeoJson(null)
-      // refresh bookings list
-      const updatedList = await database.listBookings(user.id)
-      setBookings(updatedList && updatedList.length > 0 ? updatedList : [newBooking])
-      setTimeout(() => setBookingSuccess(false), 5000)
     } catch (err) {
-      console.error(err)
-      setBookingError('Failed to request booking: ' + (err.message || 'Unknown error'))
+      console.error('Booking creation failed', err)
+      setBookingError(err.message || 'Failed to submit ride request. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -605,13 +717,13 @@ export default function Home({ user, onSignOut }) {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${activeView === 'home' ? 'native-map-mode' : ''}`}>
       {/* Sticky Floating Header */}
       <header className={`site-header${headerScrolled ? ' scrolled' : ''}`} role="banner">
         <div className="site-header-inner">
           {/* Brand */}
           <div className="header-brand">
-            <img src={logo} alt="Namma Driver logo" className="header-logo" />
+            <img src={darkMode ? logoWhite : logo} alt="Namma Driver logo" className="header-logo" />
             <div className="header-brand-text">
               <span className="brand-tagline">Private car service</span>
             </div>
@@ -659,6 +771,21 @@ export default function Home({ user, onSignOut }) {
               )}
             </button>
 
+            {/* App Settings Overlay Trigger */}
+            <button
+              type="button"
+              className={`header-settings-btn ${settingsOpen ? 'active' : ''}`}
+              onClick={() => setSettingsOpen(prev => !prev)}
+              aria-label="Settings"
+              title="Settings & Dark Mode"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+              <span className="settings-label">Settings</span>
+            </button>
+
             {/* Sign out */}
             <button
               type="button"
@@ -676,6 +803,83 @@ export default function Home({ user, onSignOut }) {
         </div>
       </header>
 
+      {/* Settings Overlay Dropdown Modal */}
+      {settingsOpen && (
+        <div className="settings-overlay-backdrop" onClick={() => setSettingsOpen(false)}>
+          <div className="settings-overlay-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="settings-overlay-header">
+              <div className="settings-header-title">
+                <span className="settings-header-icon">⚙️</span>
+                <h3>Settings & Preferences</h3>
+              </div>
+              <button
+                type="button"
+                className="settings-close-btn"
+                onClick={() => setSettingsOpen(false)}
+                aria-label="Close settings"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="settings-overlay-content">
+              {/* Dark Mode Provision Toggle */}
+              <div className="settings-option-item">
+                <div className="settings-option-info">
+                  <div className="settings-option-label">
+                    <span className="option-emoji">{darkMode ? '🌙' : '☀️'}</span>
+                    <strong>Dark Mode</strong>
+                    <span className={`theme-badge ${darkMode ? 'dark' : 'light'}`}>
+                      {darkMode ? 'ON' : 'OFF'}
+                    </span>
+                  </div>
+                  <p className="settings-option-desc">
+                    {darkMode ? 'Night theme enabled for low-light travel' : 'Crisp day theme for daytime booking'}
+                  </p>
+                </div>
+                <label className="toggle-switch" aria-label="Toggle dark mode">
+                  <input
+                    type="checkbox"
+                    checked={darkMode}
+                    onChange={handleToggleDarkMode}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </div>
+
+              {/* Live Traffic Flow Layer Status */}
+              <div className="settings-option-item">
+                <div className="settings-option-info">
+                  <div className="settings-option-label">
+                    <span className="option-emoji">🚦</span>
+                    <strong>Live Traffic Flow</strong>
+                    <span className="theme-badge live">Live</span>
+                  </div>
+                  <p className="settings-option-desc">Color-coded real-time Google congestion lines</p>
+                </div>
+                <span className="settings-status-pill green">ACTIVE</span>
+              </div>
+
+              {/* Advance Booking Policy */}
+              <div className="settings-option-item">
+                <div className="settings-option-info">
+                  <div className="settings-option-label">
+                    <span className="option-emoji">⏱️</span>
+                    <strong>Advance Booking Window</strong>
+                  </div>
+                  <p className="settings-option-desc">Min. 4 hours required for chauffeur scheduling</p>
+                </div>
+                <span className="settings-status-pill blue">4 Hours</span>
+              </div>
+            </div>
+
+            <div className="settings-overlay-footer">
+              <span className="app-version-text">Namma Driver • Native Map Edition</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeView === 'history' ? (
         <TripHistoryView
           bookings={bookings}
@@ -690,629 +894,326 @@ export default function Home({ user, onSignOut }) {
           }}
         />
       ) : (
-        <>
-          <section className="card booking-card">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">New journey</span>
-            <h2>Where are you going?</h2>
-          </div>
-          <span className="status-dot">Ready to book</span>
-        </div>
-        <form className="form" onSubmit={handleRequest}>
-          <div className="form-grid">
-            <DateTimePicker
-              dateValue={dateValue}
-              timeValue={timeValue}
-              onChange={updateDateTime}
+        <div className="rapido-layout">
+          {/* 1. Full Interactive Map Canvas with Live Location & Drivers */}
+          <div className="rapido-map-stage">
+            <RoutePreviewMap
+              fromCoords={fromCoords}
+              toCoords={toCoords}
+              googleDirectionsResult={googleDirectionsResult}
+              className="rapido-map-canvas"
+              onLocateMe={handleUseCurrentLocation}
+              isDarkMode={darkMode}
             />
-            {fieldInlineError?.field === 'datetime' && (
-              <div className="field-inline-alert scheduler-alert full-width" role="alert">
+          </div>
+
+          {/* 2. Floating Progressive Bottom Sheet Drawer */}
+          <div className={`rapido-drawer ${hasRoute && stepMode === 'ride_options' ? 'mode-options' : 'mode-search'}`}>
+            <div className="rapido-drawer-handle" aria-hidden="true" />
+
+            {/* Error alerts */}
+            {bookingError && (
+              <div className="rapido-alert-banner error" role="alert">
+                <span>⚠️</span> {bookingError}
+              </div>
+            )}
+            {fieldInlineError && (
+              <div className="rapido-alert-banner warning" role="alert">
                 <span>⚠️</span> {fieldInlineError.message}
               </div>
             )}
 
-            {/* Redesigned Location Inputs with Map & GPS Quick Actions */}
-            <div className="location-inputs-container full-width">
-              {/* Pickup Location Field */}
-              <div className="location-input-group">
-                <div className="field location-field">
-                  <div className="location-label-row">
-                    <span className="location-label-text">
-                      <span className="location-indicator pickup-indicator" /> Pickup Location
-                    </span>
-                    <div className="location-action-pills">
-                      <button
-                        type="button"
-                        className="loc-action-pill"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleUseCurrentLocation()
-                        }}
-                        disabled={gpsLoading}
-                        title="Use current location"
-                      >
-                        {gpsLoading ? '📡 Locating...' : '📍 Current Location'}
-                      </button>
-                      <button
-                        type="button"
-                        className="loc-action-pill highlight"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openMapPicker('pickup')
-                        }}
-                        title="Pick location on map"
-                      >
-                        📍 Select on Map
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="input-wrap">
-                    <span className="location-dot pickup-dot" aria-hidden="true" />
-                    <input
-                      id="pickup-location-input"
-                      type="text"
-                      placeholder="Search pickup address, locality or landmark"
-                      value={from}
-                      onChange={e => handleFromInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          if (fromSuggestions && fromSuggestions.length > 0) {
-                            selectFromSuggestion(fromSuggestions[0])
-                          }
-                        }
+            {/* STEP 1: Zero-Clutter "Where to?" Search Drawer */}
+            {(!hasRoute || stepMode === 'search') && (
+              <div className="rapido-search-content">
+                {/* Service Categories Bar */}
+                <div className="rapido-service-bar">
+                  {[
+                    { id: 'Point-to-Point', name: 'Ride Now', icon: '⚡', comingSoon: true, disabled: true },
+                    { id: 'Scheduled', name: 'Schedule', icon: '🗓️' },
+                    { id: 'Rental', name: 'Rental', icon: '⚙️' },
+                    { id: 'Airport Transfer', name: 'Airport', icon: '✈️' }
+                  ].map(s => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={s.disabled}
+                      className={`rapido-service-tab ${serviceType === s.id ? 'active' : ''} ${s.disabled ? 'disabled' : ''}`}
+                      onClick={() => {
+                        if (s.disabled) return
+                        setServiceType(s.id)
+                        if (s.id === 'Scheduled') setShowScheduler(true)
                       }}
-                    />
-                    {from && (
-                      <button
-                        type="button"
-                        className="input-clear-btn"
-                        onClick={() => { setFrom(''); setFromCoords(null); fromCoordsRef.current = null }}
-                        aria-label="Clear pickup"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-
-                  {fieldInlineError?.field === 'from' && (
-                    <div className="field-inline-alert" role="alert">
-                      <span>⚠️</span> {fieldInlineError.message}
-                    </div>
-                  )}
-
-                  {(fromSuggestions.length > 0 || fromLoading || fromError) && (
-                    <ul className="suggestions location-suggestions-list">
-                      {fromLoading && <li className="sug-status-msg">🔍 Searching local places...</li>}
-                      {fromError && <li className="sug-status-msg err">⚠️ {fromError}</li>}
-                      {!fromLoading && !fromError && fromSuggestions.length === 0 && <li className="sug-status-msg">No local places found</li>}
-                      {fromSuggestions.map((s, i) => (
-                        <li
-                          key={i}
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            selectFromSuggestion(s)
-                          }}
-                          className="sug-item"
-                        >
-                          <div className="sug-icon-badge">📍</div>
-                          <div className="sug-text-container">
-                            <strong className="sug-main-text">{s.main_text || s.display_name.split(',')[0]}</strong>
-                            {(s.secondary_text || s.display_name.split(',').length > 1) && (
-                              <span className="sug-sub-text">
-                                {s.secondary_text || s.display_name.split(',').slice(1).join(', ').trim()}
-                              </span>
-                            )}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                      title={s.comingSoon ? 'Ride Now is coming soon' : s.name}
+                    >
+                      {s.comingSoon && <span className="rapido-tab-badge-soon">Soon</span>}
+                      <span className="tab-icon">{s.icon}</span>
+                      <span className="tab-text">{s.name}</span>
+                    </button>
+                  ))}
                 </div>
-              </div>
 
-              {/* Swap Button */}
-              <div className="location-swap-divider">
-                <button
-                  type="button"
-                  className="btn-swap-locations"
-                  onClick={handleSwapLocations}
-                  disabled={!from && !to}
-                  title="Swap Pickup & Destination"
-                  aria-label="Swap Pickup and Destination"
-                >
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="17 1 21 5 17 9"></polyline>
-                    <path d="M3 5h18"></path>
-                    <polyline points="7 23 3 19 7 15"></polyline>
-                    <path d="M21 19H3"></path>
-                  </svg>
-                </button>
-              </div>
-
-              {/* Drop-off Location Field */}
-              <div className="location-input-group">
-                <div className="field location-field">
-                  <div className="location-label-row">
-                    <span className="location-label-text">
-                      <span className="location-indicator dropoff-indicator" /> Drop-off Destination
+                {/* Pickup Location Pill */}
+                <div className="rapido-pickup-capsule">
+                  <span className="pickup-pulse-dot" />
+                  <div className="pickup-capsule-body" onClick={() => openMapPicker('pickup')} role="button" tabIndex={0}>
+                    <span className="pickup-capsule-lbl">Pickup Location</span>
+                    <span className="pickup-capsule-val" title={from || 'Current Location'}>
+                      {fromLoading || gpsLoading ? (
+                        <span className="pickup-locating-pulse">📍 Locating your position...</span>
+                      ) : from ? (
+                        from.length > 36 ? from.slice(0, 36) + '…' : from
+                      ) : (
+                        '📍 Tap to set pickup location'
+                      )}
                     </span>
-                    <div className="location-action-pills">
-                      <button
-                        type="button"
-                        className="loc-action-pill highlight"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openMapPicker('destination')
-                        }}
-                        title="Pick destination on map"
-                      >
-                        📍 Select on Map
-                      </button>
-                    </div>
                   </div>
+                  <div className="pickup-capsule-actions">
+                    <button
+                      type="button"
+                      className="pickup-gps-quick-btn"
+                      onClick={handleUseCurrentLocation}
+                      disabled={gpsLoading || fromLoading}
+                      title="Use my live GPS location"
+                    >
+                      {gpsLoading ? '⏳ GPS' : '🎯 GPS'}
+                    </button>
+                    <button
+                      type="button"
+                      className="pickup-capsule-btn"
+                      onClick={() => openMapPicker('pickup')}
+                      title="Change pickup on map"
+                    >
+                      🗺️ Change
+                    </button>
+                  </div>
+                </div>
 
-                  <div className="input-wrap">
-                    <span className="location-dot dropoff-dot" aria-hidden="true" />
+                {/* Hero "Where are you going?" Destination Search Box */}
+                <div className="rapido-search-box-wrap">
+                  <div className="rapido-search-input-inner">
+                    <span className="rapido-search-icon" aria-hidden="true">🔍</span>
                     <input
-                      id="destination-location-input"
+                      id="rapido-destination-input"
                       type="text"
-                      placeholder="Search destination, locality or landmark"
+                      className="rapido-destination-input"
+                      placeholder="Where are you going?"
                       value={to}
                       onChange={e => handleToInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          if (toSuggestions && toSuggestions.length > 0) {
-                            selectToSuggestion(toSuggestions[0])
-                          }
+                      onFocus={() => {
+                        if (to && toSuggestions.length === 0) {
+                          fetchSuggestions(to).then(setToSuggestions)
                         }
                       }}
+                      autoComplete="off"
                     />
                     {to && (
                       <button
                         type="button"
-                        className="input-clear-btn"
-                        onClick={() => { setTo(''); setToCoords(null); toCoordsRef.current = null }}
-                        aria-label="Clear destination"
+                        className="rapido-search-clear"
+                        onClick={() => {
+                          setTo('')
+                          setToCoords(null)
+                          toCoordsRef.current = null
+                          setRouteInfo(null)
+                          setGoogleDirectionsResult(null)
+                          setToSuggestions([])
+                        }}
+                        aria-label="Clear input"
                       >
                         ✕
                       </button>
                     )}
                   </div>
 
-                  {fieldInlineError?.field === 'to' && (
-                    <div className="field-inline-alert" role="alert">
-                      <span>⚠️</span> {fieldInlineError.message}
-                    </div>
-                  )}
-
-                  {(toSuggestions.length > 0 || toLoading || toError) && (
-                    <ul className="suggestions location-suggestions-list">
-                      {toLoading && <li className="sug-status-msg">🔍 Searching local places...</li>}
-                      {toError && <li className="sug-status-msg err">⚠️ {toError}</li>}
-                      {!toLoading && !toError && toSuggestions.length === 0 && <li className="sug-status-msg">No local places found</li>}
-                      {toSuggestions.map((s, i) => (
+                  {/* Autocomplete Dropdown List */}
+                  {toSuggestions.length > 0 && (
+                    <ul className="rapido-suggestions-menu" role="listbox">
+                      {toSuggestions.map((item, idx) => (
                         <li
-                          key={i}
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            selectToSuggestion(s)
-                          }}
-                          className="sug-item"
+                          key={idx}
+                          role="option"
+                          className="rapido-suggestion-row"
+                          onClick={() => selectToSuggestion(item)}
                         >
-                          <div className="sug-icon-badge">🏁</div>
-                          <div className="sug-text-container">
-                            <strong className="sug-main-text">{s.main_text || s.display_name.split(',')[0]}</strong>
-                            {(s.secondary_text || s.display_name.split(',').length > 1) && (
-                              <span className="sug-sub-text">
-                                {s.secondary_text || s.display_name.split(',').slice(1).join(', ').trim()}
-                              </span>
-                            )}
+                          <span className="row-icon">📍</span>
+                          <div className="row-details">
+                            <strong className="row-primary">{item.main_text || item.display_name.split(',')[0]}</strong>
+                            <small className="row-secondary">{item.secondary_text || item.display_name.split(',').slice(1).join(',')}</small>
                           </div>
                         </li>
                       ))}
                     </ul>
                   )}
                 </div>
-              </div>
-            </div>
 
-            {/* Trendy Vehicle Category Selector */}
-            <div className="trendy-car-section full-width">
-              <div className="trendy-car-header">
-                <div>
-                  <span className="eyebrow">Vehicle Category</span>
-                  <h3 className="trendy-car-title">Choose your car</h3>
-                </div>
-                <span className="car-active-pill">
-                  {carType === 'Sedan' && '🚗 Sedan • Prime Comfort'}
-                  {carType === 'Mini' && '⚡ Mini • Best Value'}
-                  {carType === 'SUV' && '👨‍👩‍👧‍👦 SUV • Spacious 6-Seater'}
-                  {carType === 'Luxury' && '✨ Luxury • Executive Fleet'}
-                </span>
-              </div>
-
-              <div className="trendy-car-grid">
-                {carOptions.map(car => {
-                  const isSelected = carType === car.name
-                  const fareDisplay = getCarFare(car.name)
-                  return (
-                    <label
-                      key={car.name}
-                      className={`trendy-car-card ${isSelected ? 'selected' : ''}`}
-                    >
-                      <input
-                        type="radio"
-                        name="carType"
-                        value={car.name}
-                        checked={isSelected}
-                        onChange={e => setCarType(e.target.value)}
-                      />
-
-                      <div className="car-card-top-row">
-                        <span className={`car-tag-badge ${car.badgeCls}`}>
-                          {car.badge}
-                        </span>
-                        <div className="car-radio-check">
-                          <span className="car-check-icon">✓</span>
-                        </div>
-                      </div>
-
-                      <div className="car-image-showcase">
-                        <div className="car-image-backdrop" />
-                        <img
-                          src={car.image}
-                          alt={`${car.name} car`}
-                          className="car-showcase-img"
-                        />
-                      </div>
-
-                      <div className="car-card-details">
-                        <div className="car-title-row">
-                          <strong className="car-name">{car.name}</strong>
-                          <span className="car-fare-preview">{fareDisplay}</span>
-                        </div>
-                        <p className="car-detail-text">{car.detail}</p>
-
-                        <div className="car-spec-chips">
-                          <span className="car-spec-chip">👥 {car.seats}</span>
-                          <span className="car-spec-chip">🧳 {car.luggage}</span>
-                          <span className="car-spec-chip eta-chip">⚡ {car.eta}</span>
-                        </div>
-                      </div>
-                    </label>
-                  )
-                })}
-              </div>
-            </div>
-
-            <fieldset className="service-field full-width">
-              <div className="service-field-header">
-                <legend className="service-legend">Choose Ride Type</legend>
-                <span className="service-active-pill">
-                  {serviceType === 'Point-to-Point' ? '⚡ Direct Route' : '⏳ Flexible Hours'}
-                </span>
-              </div>
-
-              <div className="trendy-service-grid">
-                {/* 1. Point-to-Point Card */}
-                <label className={`trendy-service-card ${serviceType === 'Point-to-Point' ? 'active' : ''}`}>
-                  <input
-                    type="radio"
-                    name="service"
-                    value="Point-to-Point"
-                    checked={serviceType === 'Point-to-Point'}
-                    onChange={() => setServiceType('Point-to-Point')}
-                  />
-                  <div className="service-card-top">
-                    <div className="service-icon-glow point-glow">
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-                      </svg>
-                    </div>
-                    <span className="service-badge-pill popular">Popular</span>
-                    <div className="service-select-indicator">
-                      <span className="indicator-dot" />
-                    </div>
-                  </div>
-
-                  <div className="service-card-content">
-                    <strong className="service-title">Point-to-Point</strong>
-                    <span className="service-tagline">Direct A-to-B Transfer</span>
-                    <div className="service-perks-row">
-                      <span className="service-mini-perk">🛣️ Distance based</span>
-                      <span className="service-mini-perk">⚡ Fast pickup</span>
-                    </div>
-                  </div>
-                </label>
-
-                {/* 2. Rental Card */}
-                <label className={`trendy-service-card ${serviceType === 'Rental' ? 'active' : ''}`}>
-                  <input
-                    type="radio"
-                    name="service"
-                    value="Rental"
-                    checked={serviceType === 'Rental'}
-                    onChange={() => setServiceType('Rental')}
-                  />
-                  <div className="service-card-top">
-                    <div className="service-icon-glow rental-glow">
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
-                        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
-                      </svg>
-                    </div>
-                    <span className="service-badge-pill flexible">Flexible</span>
-                    <div className="service-select-indicator">
-                      <span className="indicator-dot" />
-                    </div>
-                  </div>
-
-                  <div className="service-card-content">
-                    <strong className="service-title">Rental Package</strong>
-                    <span className="service-tagline">Hourly & Multi-stop</span>
-                    <div className="service-perks-row">
-                      <span className="service-mini-perk">⏱️ Multiple stops</span>
-                      <span className="service-mini-perk">🚗 Keep the car</span>
-                    </div>
-                  </div>
-                </label>
-              </div>
-            </fieldset>
-
-            {/* Preview Journey Card (Placed after Car & Service selection) */}
-            {/* Redesigned Compact & Trendy Journey Preview Capsule */}
-            {(fromCoords && toCoords) ? (
-              <div className="trendy-preview-capsule full-width" role="region" aria-label="Journey Preview">
-                {/* Route Header Row */}
-                <div className="preview-capsule-route">
-                  <div className="preview-stop start">
-                    <span className="preview-stop-icon">📍</span>
-                    <span className="preview-stop-name" title={from}>{from.split(',')[0]}</span>
-                  </div>
-
-                  <div className="preview-track-line">
-                    <div className="track-bar" />
-                    <span className="track-car-icon" aria-hidden="true">🚗</span>
-                  </div>
-
-                  <div className="preview-stop end">
-                    <span className="preview-stop-icon">🏁</span>
-                    <span className="preview-stop-name" title={to}>{to.split(',')[0]}</span>
-                  </div>
-
-                  {routeInfo?.hasTrafficDelay ? (
-                    <span className="preview-pill-tag traffic" title={routeInfo.trafficText}>
-                      🚦 Slow Traffic
-                    </span>
-                  ) : (
-                    <span className="preview-pill-tag live">
-                      ⚡ Live Route
-                    </span>
-                  )}
+                {/* Quick Shortcut Chips */}
+                <div className="rapido-chips-row">
+                  <button
+                    type="button"
+                    className="rapido-chip"
+                    onClick={() => handleQuickSelect('Chennai International Airport', [12.9941, 80.1709])}
+                  >
+                    <span>✈️</span> Airport
+                  </button>
+                  <button
+                    type="button"
+                    className="rapido-chip"
+                    onClick={() => handleQuickSelect('Chennai Central Railway Station', [13.0827, 80.2707])}
+                  >
+                    <span>🚆</span> Central
+                  </button>
+                  <button
+                    type="button"
+                    className="rapido-chip"
+                    onClick={() => handleQuickSelect('Phoenix Marketcity, Velachery', [12.9918, 80.2166])}
+                  >
+                    <span>🛍️</span> Phoenix Mall
+                  </button>
+                  <button
+                    type="button"
+                    className="rapido-chip highlight"
+                    onClick={() => openMapPicker('destination')}
+                  >
+                    <span>🗺️</span> Pick on Map
+                  </button>
                 </div>
 
-                {/* Compact Horizontal 3-Column Metrics Bar */}
-                <div className="preview-capsule-metrics">
-                  <div className="capsule-metric-item">
-                    <span className="metric-mini-label">🛣️ Distance</span>
-                    <span className="metric-mini-value">
-                      {routeLoading ? '...' : (routeInfo?.distance || '—')}
+                {/* Upcoming Scheduled Rides Pill Banner (if any) */}
+                {upcomingBookings.length > 0 && (
+                  <div
+                    className="rapido-upcoming-pill"
+                    onClick={() => setActiveView('history')}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <span className="pill-badge">🗓️ UPCOMING</span>
+                    <span className="pill-msg">
+                      <strong>{upcomingBookings.length} Scheduled Ride{upcomingBookings.length > 1 ? 's' : ''}</strong>
                     </span>
-                  </div>
-
-                  <div className="capsule-metric-divider" />
-
-                  <div className="capsule-metric-item">
-                    <span className="metric-mini-label">⏱️ Duration</span>
-                    <span className={`metric-mini-value ${routeInfo?.hasTrafficDelay ? 'traffic-text' : ''}`}>
-                      {routeLoading ? '...' : (routeInfo?.duration || '—')}
-                    </span>
-                  </div>
-
-                  <div className="capsule-metric-divider" />
-
-                  <div className="capsule-metric-item fare-hero">
-                    <div className="fare-badge-label">
-                      <span>Best Rate</span>
-                    </div>
-                    <span className="metric-mini-value fare-value">
-                      {routeLoading || !estimatedFare ? '...' : estimatedFare.formatted}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Subtle Micro-Footnote */}
-                {estimatedFare?.breakdown && (
-                  <div className="preview-capsule-footnote">
-                    <span>{carType}</span> • <span>{serviceType}</span> • <span>{estimatedFare.breakdown}</span>
+                    <span className="pill-arrow">➔</span>
                   </div>
                 )}
               </div>
-            ) : (
-              (from || to) && (
-                <div className="journey-helper-prompt full-width">
-                  <span className="helper-icon">💡</span>
-                  <span>
-                    {!from ? 'Please select a pickup location.' : 'Select a drop-off destination to preview your journey details and live fare.'}
-                  </span>
-                </div>
-              )
             )}
-          </div>
 
-          {/* Past datetime warning */}
-          {isPastDatetime && datetime && (
-            <div className="booking-warning">
-              <span>⚠️</span> Please select a <strong>future</strong> date and time.
-            </div>
-          )}
-
-          {/* Inline booking error */}
-          {bookingError && (
-            <div className="booking-inline-err">
-              <span>❌</span> {bookingError}
-            </div>
-          )}
-
-
-
-          {bookingSuccess ? (
-            <div className="booking-success-banner">
-              <span className="success-check">✓</span>
-              <div>
-                <strong>Booking requested!</strong>
-                <p>We've received your request. Our team will confirm shortly.</p>
-              </div>
-            </div>
-          ) : (
-            <button type="submit" className="btn primary-action" disabled={loading || isPastDatetime}>
-              {loading ? (
-                <><span className="btn-spinner" />Requesting...</>
-              ) : 'Request Booking'}
-            </button>
-          )}
-        </form>
-      </section>
-
-      {/* Upcoming Scheduled Rides Section */}
-      {bookings.filter(b => b.status !== 'completed' && b.status !== 'cancelled').length > 0 && (
-        <section className="card bookings-card upcoming-rides-card" aria-label="Upcoming Scheduled Rides">
-          <div className="bookings-card-header">
-            <div>
-              <span className="eyebrow upcoming-eyebrow">Scheduled Journeys</span>
-              <h3>Upcoming Rides</h3>
-            </div>
-            <span className="bookings-count-badge upcoming-badge">
-              🗓️ {bookings.filter(b => b.status !== 'completed' && b.status !== 'cancelled').length} Scheduled
-            </span>
-          </div>
-
-          <ul className="booking-list">
-            {bookings.filter(b => b.status !== 'completed' && b.status !== 'cancelled').map(b => {
-              const statusMap = {
-                requested: { label: 'Requested', cls: 'status-requested' },
-                confirmed: { label: 'Confirmed', cls: 'status-confirmed' },
-                ongoing: { label: 'Ongoing', cls: 'status-ongoing' }
-              }
-              const st = statusMap[b.status] || statusMap.requested
-              const dt = b.datetime ? new Date(b.datetime) : (b.createdAt ? new Date(b.createdAt) : null)
-              const dtStr = dt && !isNaN(dt.getTime())
-                ? dt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-                : (b.datetime || 'Scheduled')
-              const fromName = (b.from || b.from_location || 'Pickup location')
-              const toName = (b.to || b.to_location || 'Drop location')
-              const carName = b.carType || b.car_type || 'Sedan'
-              const serviceName = b.serviceType || b.service_type || 'Point-to-Point'
-
-              return (
-                <li key={`upcoming-${b.id || Math.random()}`} className="booking-item trip-history-card upcoming-trip-card">
-                  <div className="booking-item-top">
-                    <div className="booking-route">
-                      <span className="booking-from">📍 {fromName.split(',')[0]}</span>
-                      <span className="booking-arrow">→</span>
-                      <span className="booking-to">🏁 {toName.split(',')[0]}</span>
+            {/* STEP 2: Progressive Ride Selection Tray (When destination is set) */}
+            {hasRoute && stepMode === 'ride_options' && (
+              <div className="rapido-options-content">
+                {/* Route Header Strip with Distance, Time & Edit button */}
+                <div className="rapido-route-header-strip">
+                  <div className="route-header-stops">
+                    <div className="stop-item">
+                      <span className="stop-dot pickup" />
+                      <span className="stop-name" title={from}>{from.split(',')[0]}</span>
                     </div>
-                    <span className={`booking-status-badge ${st.cls}`}>{st.label}</span>
+                    <div className="stop-connector" />
+                    <div className="stop-item">
+                      <span className="stop-dot drop" />
+                      <span className="stop-name destination" title={to}><strong>{to.split(',')[0]}</strong></span>
+                    </div>
                   </div>
 
-                  <div className="booking-item-meta">
-                    <span className="booking-meta-pill">🚘 {carName}</span>
-                    <span className="booking-meta-pill">⚙️ {serviceName}</span>
-                    {b.estimatedFare && (
-                      <span className="booking-meta-pill booking-fare-pill">💰 {b.estimatedFare}</span>
-                    )}
-                    <span className="booking-meta-pill highlight-time">🗓️ {dtStr}</span>
-                    {b.driver && (
-                      <span className="booking-meta-pill driver-assigned-pill">
-                        👨‍✈️ Driver: {b.driver.name}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="trip-card-footer-actions">
+                  <div className="route-header-right">
+                    <div className="route-stat-tag">
+                      <strong>{routeInfo.distanceKm} km</strong>
+                      <small>• {routeInfo.durationMinutes} min</small>
+                    </div>
                     <button
                       type="button"
-                      className="btn-view-receipt"
-                      onClick={() => setSelectedReceipt(b)}
+                      className="btn-route-edit"
+                      onClick={() => setStepMode('search')}
+                      title="Change destination"
                     >
-                      🧾 View Details & Invoice
+                      ✎ Change
                     </button>
                   </div>
-                </li>
-              )
-            })}
-          </ul>
-        </section>
-      )}
+                </div>
 
-      {/* Rider Recent Activity & History Portal Card */}
-      <section className="card bookings-card history-glance-card">
-        <div className="history-glance-header">
-          <div>
-            <span className="eyebrow">Activity & Receipts</span>
-            <h3>Trip History & Invoices</h3>
+                {/* Horizontal / Compact Vehicle Selection Cards */}
+                <div className="rapido-vehicles-carousel">
+                  {carOptions.map(car => {
+                    const isSelected = carType === car.name
+                    const fare = getCarFare(car.name)
+                    return (
+                      <div
+                        key={car.name}
+                        className={`rapido-car-card ${isSelected ? 'active' : ''}`}
+                        onClick={() => setCarType(car.name)}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <div className="car-card-visual">
+                          <img src={car.image} alt={car.name} className="car-card-img" />
+                          <span className="car-card-eta">{car.eta}</span>
+                        </div>
+                        <div className="car-card-body">
+                          <div className="car-card-title-row">
+                            <strong>{car.name}</strong>
+                            <span className="car-card-seats">{car.seats}</span>
+                          </div>
+                          <span className="car-card-sub">{car.detail}</span>
+                          <span className="car-card-price">{fare}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Optional Schedule for Later Drawer Toggle */}
+                <div className="rapido-schedule-drawer-toggle">
+                  <button
+                    type="button"
+                    className={`btn-toggle-schedule ${showScheduler ? 'active' : ''}`}
+                    onClick={() => setShowScheduler(prev => !prev)}
+                  >
+                    <span>🗓️</span> {showScheduler ? 'Close Schedule' : (datetime ? `Scheduled: ${datetime}` : 'Schedule for later')}
+                  </button>
+                </div>
+
+                {showScheduler && (
+                  <div className="rapido-scheduler-box">
+                    <DateTimePicker
+                      dateValue={dateValue}
+                      timeValue={timeValue}
+                      onChange={updateDateTime}
+                    />
+                  </div>
+                )}
+
+                {/* Primary Booking Action Button */}
+                <button
+                  type="button"
+                  className="btn-rapido-confirm"
+                  onClick={handleRequest}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <span className="confirm-btn-loading">
+                      <span className="btn-spinner" /> Reserving...
+                    </span>
+                  ) : (
+                    <>
+                      <span className="confirm-btn-action">
+                        {datetime ? `Schedule ${carType}` : `Book ${carType}`}
+                      </span>
+                      <span className="confirm-btn-price">
+                        {estimatedFare?.formatted || getCarFare(carType)}
+                      </span>
+                      <span className="confirm-btn-arrow">➔</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+
+
+
+
           </div>
-          {bookings.length > 0 && (
-            <span className="bookings-count-badge">{bookings.length} Total</span>
-          )}
         </div>
-
-        {bookings.length > 0 ? (
-          <div className="history-glance-body">
-            {/* Most Recent Ride Snapshot */}
-            <div className="recent-trip-glance">
-              <div className="recent-glance-top">
-                <span className="recent-glance-tag">Latest Journey</span>
-                <span className={`booking-status-badge status-${bookings[0].status || 'requested'}`}>
-                  {bookings[0].status === 'completed' ? '✓ Completed' : (bookings[0].status || 'Requested')}
-                </span>
-              </div>
-              <div className="recent-glance-route">
-                <span className="glance-from">📍 {(bookings[0].from || bookings[0].from_location || 'Pickup').split(',')[0]}</span>
-                <span className="glance-arrow">→</span>
-                <span className="glance-to">🏁 {(bookings[0].to || bookings[0].to_location || 'Drop').split(',')[0]}</span>
-              </div>
-              <div className="recent-glance-meta">
-                <span className="meta-pill">🚘 {bookings[0].carType || bookings[0].car_type || 'Sedan'}</span>
-                {bookings[0].estimatedFare && (
-                  <span className="meta-pill glance-fare-pill">💰 {bookings[0].estimatedFare}</span>
-                )}
-                {bookings[0].datetime && (
-                  <span className="meta-pill">🗓️ {new Date(bookings[0].datetime).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                )}
-              </div>
-            </div>
-
-            {/* Open Dedicated History Hub Button */}
-            <button
-              type="button"
-              className="btn-view-all-trips"
-              onClick={() => {
-                setActiveView('history')
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-              }}
-            >
-              <span>Open Full Trip History & Receipts ({bookings.length})</span>
-              <span className="glance-btn-arrow">→</span>
-            </button>
-          </div>
-        ) : (
-          <div className="empty-glance-state">
-            <p>Your completed journeys and invoices will be safely archived here.</p>
-          </div>
-        )}
-      </section>
-    </>
-  )}
+      )}
 
       {/* Map Location Picker Dialog Modal */}
       <MapPickerModal
@@ -1323,6 +1224,7 @@ export default function Home({ user, onSignOut }) {
         initialAddress={mapPickerType === 'pickup' ? from : to}
         onConfirm={handleMapPickerConfirm}
         onClose={() => setMapPickerOpen(false)}
+        isDarkMode={darkMode}
       />
 
       {profileOpen && (

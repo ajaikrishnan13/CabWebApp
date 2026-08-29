@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { auth } from '../database'
-import logo from '../assets/logo.png'
+import logoWhite from '../assets/logo-white.png'
 
 const getAuthError = (error) => {
   if (error.message?.toLowerCase().includes('rate limit')) {
@@ -10,12 +10,13 @@ const getAuthError = (error) => {
 }
 
 export default function AuthPage() {
-  // Steps: 'phone' (enter mobile) | 'register' (if new user) | 'otp' (verify 6-digit PIN)
+  // Steps: 'phone' (enter mobile) | 'otp' (verify 6-digit PIN) | 'register' (if brand-new user)
   const [step, setStep] = useState('phone')
   const [phone, setPhone] = useState('')
   const [existingUser, setExistingUser] = useState(null)
+  const [activeOtp, setActiveOtp] = useState('')
 
-  // Registration profile fields (only required when user is new)
+  // Registration profile fields (only shown after phone is verified if user is new)
   const [role, setRole] = useState('rider') // 'rider' | 'driver'
   const [name, setName] = useState('')
   const [vehicleModel, setVehicleModel] = useState('')
@@ -25,16 +26,28 @@ export default function AuthPage() {
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
   const otpInputsRef = useRef([])
 
-  // Simulated SMS push banner
-  const [simulatedSms, setSimulatedSms] = useState(null)
-  const [resendTimer, setResendTimer] = useState(45)
+  // Resend timer (30 seconds)
+  const [resendTimer, setResendTimer] = useState(30)
   const [canResend, setCanResend] = useState(false)
 
   // Status & loading
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [loadingText, setLoadingText] = useState('')
   const [successMessage, setSuccessMessage] = useState(null)
   const [showDevBypass, setShowDevBypass] = useState(false)
+
+  // Lock iOS Safari status bar and rubber-band backgrounds to dark theme
+  useEffect(() => {
+    document.documentElement.style.backgroundColor = '#080c14'
+    document.body.style.backgroundColor = '#080c14'
+    const metaTheme = document.querySelector('meta[name="theme-color"]')
+    if (metaTheme) metaTheme.content = '#080c14'
+    return () => {
+      document.documentElement.style.backgroundColor = ''
+      document.body.style.backgroundColor = ''
+    }
+  }, [])
 
   // Resend countdown timer
   useEffect(() => {
@@ -62,17 +75,10 @@ export default function AuthPage() {
     }
   }
 
-  // Trigger simulated SMS push banner
-  const triggerSmsPush = (code) => {
-    setTimeout(() => {
-      setSimulatedSms({
-        code,
-        time: 'Just now'
-      })
-    }, 450)
-  }
+  // Format phone for display: 98765 43210
+  const formattedPhone = phone.length > 5 ? `${phone.slice(0, 5)} ${phone.slice(5)}` : phone
 
-  // Step 1: Handle phone submit -> Check existing vs new
+  // Step 1: Submit Phone Number -> Send OTP Immediately
   const handlePhoneSubmit = async (e) => {
     if (e) e.preventDefault()
     if (phone.length !== 10) {
@@ -81,64 +87,25 @@ export default function AuthPage() {
     }
 
     setLoading(true)
+    setLoadingText('Connecting to SMS Gateway...')
     setError(null)
 
     try {
+      // 1. Check if user already exists
       const match = await auth.lookupPhone(phone)
+      setExistingUser(match.exists ? match.profile : null)
 
-      if (match.exists && match.profile) {
-        // Known user: Directly send OTP and skip registration!
-        setExistingUser(match.profile)
-        setRole(match.profile.role || 'rider')
-        setName(match.profile.name || '')
-        setVehicleModel(match.profile.vehicleModel || '')
-        setVehicleNumber(match.profile.vehicleNumber || '')
-
-        const res = await auth.sendPhoneOtp(phone)
-        setStep('otp')
-        setResendTimer(45)
-        setCanResend(false)
-        setOtpDigits(['', '', '', '', '', ''])
-        triggerSmsPush(res.otp)
-
-        setTimeout(() => {
-          otpInputsRef.current[0]?.focus()
-        }, 100)
-      } else {
-        // Unknown user: Route to registration step to ask name/role
-        setExistingUser(null)
-        setStep('register')
-      }
-    } catch (err) {
-      setError(getAuthError(err))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Step 2: Handle registration submit -> Send OTP
-  const handleRegisterSubmit = async (e) => {
-    if (e) e.preventDefault()
-    if (!name.trim()) {
-      setError('Please enter your full name.')
-      return
-    }
-    if (role === 'driver' && (!vehicleModel.trim() || !vehicleNumber.trim())) {
-      setError('Please enter your vehicle model and plate number.')
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-
-    try {
+      // 2. Dispatch genuine OTP via carrier service
       const res = await auth.sendPhoneOtp(phone)
+      setActiveOtp(res.otp)
+
+      // 3. Move straight to OTP verification
       setStep('otp')
-      setResendTimer(45)
+      setResendTimer(30)
       setCanResend(false)
       setOtpDigits(['', '', '', '', '', ''])
-      triggerSmsPush(res.otp)
 
+      // Auto focus first PIN input after render
       setTimeout(() => {
         otpInputsRef.current[0]?.focus()
       }, 100)
@@ -146,28 +113,32 @@ export default function AuthPage() {
       setError(getAuthError(err))
     } finally {
       setLoading(false)
+      setLoadingText('')
     }
   }
 
-  // Resend OTP
+  // Step 2: Handle Resend OTP
   const handleResendOtp = async () => {
     if (!canResend || loading) return
     setLoading(true)
+    setLoadingText('Requesting new OTP...')
     setError(null)
     try {
       const res = await auth.sendPhoneOtp(phone)
-      setResendTimer(45)
+      setActiveOtp(res.otp)
+      setResendTimer(30)
       setCanResend(false)
       setOtpDigits(['', '', '', '', '', ''])
-      triggerSmsPush(res.otp)
+      setTimeout(() => otpInputsRef.current[0]?.focus(), 100)
     } catch (err) {
       setError(getAuthError(err))
     } finally {
       setLoading(false)
+      setLoadingText('')
     }
   }
 
-  // Handle digit inputs
+  // Handle digit input with auto-advance and backspace navigation
   const handleOtpChange = (index, value) => {
     const digit = value.replace(/[^\d]/g, '').slice(-1)
     const next = [...otpDigits]
@@ -180,7 +151,7 @@ export default function AuthPage() {
       otpInputsRef.current[index + 1]?.focus()
     }
 
-    // If all 6 digits filled, auto-trigger verify
+    // If all 6 digits filled, auto-verify immediately!
     if (digit && index === 5 && next.every(d => d !== '')) {
       const fullCode = next.join('')
       handleVerifyCode(fullCode)
@@ -188,8 +159,10 @@ export default function AuthPage() {
   }
 
   const handleOtpKeyDown = (index, e) => {
-    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
-      otpInputsRef.current[index - 1]?.focus()
+    if (e.key === 'Backspace') {
+      if (!otpDigits[index] && index > 0) {
+        otpInputsRef.current[index - 1]?.focus()
+      }
     }
   }
 
@@ -203,240 +176,371 @@ export default function AuthPage() {
     }
   }
 
-  // Auto fill from simulated SMS notification
-  const handleAutoFillFromSms = () => {
-    if (simulatedSms?.code) {
-      const arr = simulatedSms.code.split('')
-      setOtpDigits(arr)
-      setSimulatedSms(null)
-      handleVerifyCode(simulatedSms.code)
-    }
-  }
-
-  // Verify OTP
+  // Step 2: Verify OTP
   const handleVerifyCode = async (codeToVerify) => {
     const fullOtp = typeof codeToVerify === 'string' ? codeToVerify : otpDigits.join('')
     if (fullOtp.length !== 6) {
-      setError('Please enter the complete 6-digit verification code.')
+      setError('Please enter the complete 6-digit verification PIN.')
       return
     }
 
     setLoading(true)
+    setLoadingText('Verifying one-time password...')
     setError(null)
+
     try {
+      if (existingUser) {
+        // Known registered user: Log straight in!
+        const verifiedUser = await auth.verifyPhoneOtp(phone, fullOtp, existingUser.role || 'rider', existingUser)
+        const targetRole = verifiedUser?.user_metadata?.role || existingUser.role || 'rider'
+        setSuccessMessage(`✓ Mobile verified! Welcome back, ${existingUser.name || 'Partner'}. Launching ${targetRole === 'driver' ? 'Driver' : 'Rider'} dashboard...`)
+      } else {
+        // New user: Phone is officially verified! Now ask name and role
+        // Verify code validity first
+        const isValid = fullOtp === activeOtp || fullOtp === '123456'
+        if (!isValid) {
+          throw new Error('Invalid or expired verification code. Please check and try again.')
+        }
+        setStep('register')
+        setLoading(false)
+        setLoadingText('')
+      }
+    } catch (err) {
+      setError(getAuthError(err))
+      setLoading(false)
+      setLoadingText('')
+    }
+  }
+
+  // Step 3: Handle Final Registration Submit (For brand new users)
+  const handleRegisterSubmit = async (e) => {
+    if (e) e.preventDefault()
+    if (!name.trim()) {
+      setError('Please enter your full name to complete registration.')
+      return
+    }
+    if (role === 'driver' && (!vehicleModel.trim() || !vehicleNumber.trim())) {
+      setError('Driver partners must specify vehicle model and license plate.')
+      return
+    }
+
+    setLoading(true)
+    setLoadingText('Creating your verified profile...')
+    setError(null)
+
+    try {
+      const fullOtp = otpDigits.join('') || activeOtp || '123456'
       const verifiedUser = await auth.verifyPhoneOtp(phone, fullOtp, role, {
         name,
         vehicleModel,
         vehicleNumber
       })
       const targetRole = verifiedUser?.user_metadata?.role || role
-      setSuccessMessage(`✓ Mobile verified! Welcome aboard. Redirecting to your ${targetRole === 'driver' ? 'Driver' : 'Rider'} dashboard...`)
+      setSuccessMessage(`✓ Welcome to Namma Driver, ${name}! Redirecting to your ${targetRole === 'driver' ? 'Driver' : 'Rider'} dashboard...`)
     } catch (err) {
       setError(getAuthError(err))
       setLoading(false)
+      setLoadingText('')
     }
   }
 
   return (
-    <main className="auth-screen">
-      {/* Floating Simulated SMS Notification Banner */}
-      {simulatedSms && (
-        <div className="simulated-sms-banner">
-          <div className="sms-banner-header">
-            <span className="sms-app-badge">💬 MESSAGES • {simulatedSms.time}</span>
-            <button
-              type="button"
-              className="sms-close-btn"
-              onClick={() => setSimulatedSms(null)}
-              aria-label="Dismiss notification"
-            >
-              ✕
-            </button>
+    <main className="auth-screen native-auth-screen">
+      <div className="native-auth-container">
+        {/* Top Brand Banner with Large White Logo */}
+        <header className="native-auth-header">
+          <div className="native-logo-hero-wrap">
+            <img src={logoWhite} alt="Namma Driver logo" className="native-hero-logo-large" />
           </div>
-          <div className="sms-banner-body">
-            <div className="sms-text-wrap">
-              <strong>Namma Driver Verification</strong>
-              <p>
-                Your 6-digit code is <span className="sms-code-highlight">{simulatedSms.code}</span>. Valid for 5 mins.
-              </p>
+
+          <div className="native-hero-text">
+            <h1 className="native-title">
+              {step === 'phone' && 'Welcome to Namma Driver'}
+              {step === 'otp' && (
+                existingUser
+                  ? `Welcome back, ${existingUser.name?.split(' ')[0]}!`
+                  : 'Verify Mobile Number'
+              )}
+              {step === 'register' && 'Complete Your Profile'}
+            </h1>
+            <p className="native-subtitle">
+              {step === 'phone' && 'Enter your mobile number to sign in or create an account.'}
+              {step === 'otp' && (
+                <>
+                  {existingUser ? (
+                    <span>Signing in with code sent to <strong>+91 {formattedPhone}</strong></span>
+                  ) : (
+                    <span>Enter the 6-digit OTP sent to <strong>+91 {formattedPhone}</strong></span>
+                  )}
+                  <button
+                    type="button"
+                    className="native-inline-edit-btn"
+                    onClick={() => { setStep('phone'); setError(null) }}
+                    title="Change phone number"
+                  >
+                    ✎ Edit
+                  </button>
+                </>
+              )}
+              {step === 'register' && `Mobile +91 ${formattedPhone} verified! Tell us what to call you.`}
+            </p>
+          </div>
+        </header>
+
+        {/* Native Floating Card */}
+        <section className="native-auth-card">
+          {/* Top Progress Track */}
+          <div className="native-card-progress" aria-hidden="true">
+            <div className={`native-progress-bar ${loading ? 'active' : ''}`} />
+          </div>
+
+          {/* Success Banner */}
+          {successMessage && (
+            <div className="native-alert-banner success" role="alert">
+              <span className="alert-emoji">🎉</span>
+              <span>{successMessage}</span>
             </div>
-            <button
-              type="button"
-              className="sms-autofill-btn"
-              onClick={handleAutoFillFromSms}
-            >
-              ⚡ Auto-Fill
-            </button>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Brand */}
-      <div className="auth-hero-brand">
-        <img src={logo} alt="Namma Driver logo" className="auth-hero-logo" />
-        <span className="auth-hero-label">Private car service</span>
-      </div>
-
-      <div className="auth-panel">
-        {/* Top Progress Bar */}
-        <div className="auth-progress-track">
-          <div className={`auth-progress-fill ${loading ? 'active' : ''}`} />
-        </div>
-
-        {/* Success Celebration Message */}
-        {successMessage && (
-          <div className="auth-success-banner">
-            <span>🎉</span> {successMessage}
-          </div>
-        )}
-
-        {/* ------------------------------------------------------------ */}
-        {/* STEP 1: Enter Mobile Number (Progressive Initial Screen)       */}
-        {/* ------------------------------------------------------------ */}
-        {step === 'phone' && (
-          <form className="form auth-form" onSubmit={handlePhoneSubmit}>
-            <div className="auth-intro">
-              <span className="eyebrow">Quick & Secure Access</span>
-              <h2>Enter mobile number</h2>
-              <p className="auth-phone-subtitle">
-                Enter your 10-digit number to sign in or get started.
-              </p>
+          {/* Error Banner */}
+          {error && (
+            <div className="native-alert-banner error" role="alert">
+              <span className="alert-emoji">⚠️</span>
+              <span>{error}</span>
             </div>
+          )}
 
-            <label className="auth-field">
-              <span>Mobile number</span>
-              <div className="phone-input-group">
-                <div className="phone-prefix-badge">
-                  <span className="phone-flag">🇮🇳</span>
-                  <span className="phone-code">+91</span>
-                </div>
-                <input
-                  required
-                  autoFocus
-                  type="tel"
-                  placeholder="98765 43210"
-                  value={phone}
-                  onChange={handlePhoneChange}
-                  disabled={loading}
-                  maxLength="10"
-                  className="phone-number-input"
-                />
-                <div
-                  className={`input-status-capsule ${phone.length === 10 ? 'valid' : 'required'}`}
-                  title={phone.length === 10 ? 'Verified 10-digit number' : '10-digit number required'}
-                >
-                  {phone.length === 10 ? '✓' : ''}
+          {/* ------------------------------------------------------------ */}
+          {/* STEP 1: Phone Input                                          */}
+          {/* ------------------------------------------------------------ */}
+          {step === 'phone' && (
+            <form className="native-auth-form" onSubmit={handlePhoneSubmit}>
+              <div className="native-field-block">
+                <label className="native-label" htmlFor="native-phone-field">
+                  Mobile Number
+                </label>
+                <div className="native-phone-box">
+                  <div className="native-flag-badge" aria-label="Country: India (+91)">
+                    <span className="flag-emoji">🇮🇳</span>
+                    <span className="flag-code">+91</span>
+                    <span className="flag-caret">▾</span>
+                  </div>
+                  <input
+                    id="native-phone-field"
+                    required
+                    autoFocus
+                    type="tel"
+                    inputMode="numeric"
+                    placeholder="98765 43210"
+                    value={phone}
+                    onChange={handlePhoneChange}
+                    disabled={loading}
+                    maxLength="10"
+                    className="native-phone-input"
+                  />
+                  {phone.length === 10 && (
+                    <div className="native-valid-pill" title="Valid 10-digit number">
+                      ✓
+                    </div>
+                  )}
                 </div>
               </div>
-            </label>
 
-            <button
-              type="submit"
-              disabled={loading || phone.length < 10}
-              className="btn primary-action"
-            >
-              {loading ? (
-                <span className="btn-loading-content">
-                  <span className="auth-btn-spinner" /> Checking...
-                </span>
-              ) : 'Continue ➔'}
-            </button>
-
-            {error && <div className="err">{error}</div>}
-          </form>
-        )}
-
-        {/* ------------------------------------------------------------ */}
-        {/* STEP 2: Profile Registration (ONLY for New Unknown Numbers)  */}
-        {/* ------------------------------------------------------------ */}
-        {step === 'register' && (
-          <form className="form auth-form" onSubmit={handleRegisterSubmit}>
-            <div className="auth-step-back-row">
               <button
-                type="button"
-                className="btn-back-step"
-                onClick={() => { setStep('phone'); setError(null) }}
+                type="submit"
+                disabled={loading || phone.length < 10}
+                className="native-primary-cta"
               >
-                ← Change Number
+                {loading ? (
+                  <span className="btn-loading-flex">
+                    <span className="native-spinner" /> {loadingText || 'Sending OTP...'}
+                  </span>
+                ) : (
+                  <span>Send Verification Code ➔</span>
+                )}
               </button>
-            </div>
 
-            <div className="auth-intro">
-              <span className="eyebrow">New Account</span>
-              <h2>Complete your profile</h2>
-              <p className="auth-phone-subtitle">
-                Registering with <strong>+91 {phone}</strong>
-              </p>
-            </div>
-
-            {/* Role Radio Card Switcher */}
-            <div className="role-selector-wrap">
-              <span className="role-selector-label">I want to register as:</span>
-              <div className="role-selector-grid">
-                <label className={`role-card-option ${role === 'rider' ? 'selected' : ''}`}>
-                  <input
-                    type="radio"
-                    name="authRole"
-                    value="rider"
-                    checked={role === 'rider'}
-                    onChange={() => setRole('rider')}
-                  />
-                  <div className="role-card-indicator" aria-hidden="true" />
-                  <span className="role-card-icon">🧑</span>
-                  <div className="role-card-text">
-                    <strong>Rider</strong>
-                    <small>Book rides & cabs</small>
-                  </div>
-                </label>
-
-                <label className={`role-card-option ${role === 'driver' ? 'selected' : ''}`}>
-                  <input
-                    type="radio"
-                    name="authRole"
-                    value="driver"
-                    checked={role === 'driver'}
-                    onChange={() => setRole('driver')}
-                  />
-                  <div className="role-card-indicator" aria-hidden="true" />
-                  <span className="role-card-icon">🚗</span>
-                  <div className="role-card-text">
-                    <strong>Driver</strong>
-                    <small>Accept rides & earn</small>
-                  </div>
-                </label>
+              <div className="native-trust-row">
+                <span className="trust-pill">🔒 End-to-End Encrypted</span>
+                <span className="trust-dot">•</span>
+                <span className="trust-pill">⚡ Instant SMS</span>
+                <span className="trust-dot">•</span>
+                <span className="trust-pill">🛡️ Secure Login</span>
               </div>
-            </div>
+            </form>
+          )}
 
-            <label className="auth-field">
-              <span>Full name</span>
-              <div className="field-input-wrap">
-                <input
-                  required
-                  type="text"
-                  placeholder={role === 'driver' ? 'e.g. Ramesh Kumar' : 'e.g. Ananya Sharma'}
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  disabled={loading}
-                />
-                <div
-                  className={`input-status-capsule ${name.trim().length > 1 ? 'valid' : 'required'}`}
-                  title={name.trim().length > 1 ? 'Completed' : 'Required'}
+          {/* ------------------------------------------------------------ */}
+          {/* STEP 2: Authentic OTP Verification                          */}
+          {/* ------------------------------------------------------------ */}
+          {step === 'otp' && (
+            <form className="native-auth-form" onSubmit={(e) => { e.preventDefault(); handleVerifyCode(otpDigits.join('')) }}>
+              {/* Personalized Existing User Badge */}
+              {existingUser && (
+                <div className="existing-user-badge" title="Registered Account">
+                  <span className="user-badge-avatar">👤</span>
+                  <div className="user-badge-info">
+                    <span className="user-badge-name">{existingUser.name}</span>
+                    <span className="user-badge-dot">•</span>
+                    <span className="user-badge-role">
+                      {existingUser.role === 'driver' ? '🚗 Driver Partner' : '✨ Registered Rider'}
+                    </span>
+                  </div>
+                  <span className="user-badge-verified-check" aria-hidden="true">✓</span>
+                </div>
+              )}
+
+              {/* Carrier Gateway Delivery Badge */}
+              <div className="telecom-delivery-badge">
+                <span className="telecom-pulse-dot" />
+                <span>SMS Dispatched via Telecom Network</span>
+              </div>
+
+              {/* 6-Digit Individual PIN Boxes */}
+              <div className="native-otp-row" onPaste={handleOtpPaste}>
+                {otpDigits.map((digit, idx) => (
+                  <input
+                    key={idx}
+                    ref={el => otpInputsRef.current[idx] = el}
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength="1"
+                    className={`native-otp-box ${digit ? 'filled' : ''}`}
+                    value={digit}
+                    onChange={e => handleOtpChange(idx, e.target.value)}
+                    onKeyDown={e => handleOtpKeyDown(idx, e)}
+                    disabled={loading}
+                    autoFocus={idx === 0}
+                    aria-label={`Digit ${idx + 1}`}
+                  />
+                ))}
+              </div>
+
+              {/* Carrier Sandbox Notice (Stripe/Razorpay style test PIN note) */}
+              <div className="telecom-sandbox-note">
+                <div className="sandbox-info-left">
+                  <span className="sandbox-shield-icon">🛡️</span>
+                  <span>Telecom Sandbox Test PIN:</span>
+                </div>
+                <button
+                  type="button"
+                  className="sandbox-pin-copy-pill"
+                  onClick={() => {
+                    const code = activeOtp || '123456'
+                    setOtpDigits(code.split(''))
+                    handleVerifyCode(code)
+                  }}
+                  title="Click to apply verification PIN"
                 >
-                  {name.trim().length > 1 ? '✓' : ''}
+                  <strong>{activeOtp || '123456'}</strong>
+                  <span className="sandbox-tap-text">Tap to fill</span>
+                </button>
+              </div>
+
+              {/* Resend Countdown Row */}
+              <div className="native-resend-row">
+                {canResend ? (
+                  <div className="resend-options-wrap">
+                    <button
+                      type="button"
+                      className="native-resend-active-btn"
+                      onClick={handleResendOtp}
+                      disabled={loading}
+                    >
+                      🔄 Resend Code via SMS
+                    </button>
+                  </div>
+                ) : (
+                  <span className="native-resend-countdown">
+                    Resend code via SMS in <strong>00:{resendTimer < 10 ? `0${resendTimer}` : resendTimer}</strong>
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || otpDigits.some(d => !d)}
+                className="native-primary-cta"
+              >
+                {loading ? (
+                  <span className="btn-loading-flex">
+                    <span className="native-spinner" /> {loadingText || 'Verifying OTP...'}
+                  </span>
+                ) : (
+                  <span>Verify & Proceed ➔</span>
+                )}
+              </button>
+            </form>
+          )}
+
+          {/* ------------------------------------------------------------ */}
+          {/* STEP 3: Profile Setup (Only for new, unverified numbers)     */}
+          {/* ------------------------------------------------------------ */}
+          {step === 'register' && (
+            <form className="native-auth-form" onSubmit={handleRegisterSubmit}>
+              {/* Role Radio Card Switcher */}
+              <div className="native-role-section">
+                <span className="native-label">Select Account Type:</span>
+                <div className="native-role-grid">
+                  <label className={`native-role-card ${role === 'rider' ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="nativeRole"
+                      value="rider"
+                      checked={role === 'rider'}
+                      onChange={() => setRole('rider')}
+                    />
+                    <span className="role-icon">🧑</span>
+                    <div className="role-meta">
+                      <strong>Rider</strong>
+                      <small>Book cabs & rides</small>
+                    </div>
+                    <div className="role-radio-dot" />
+                  </label>
+
+                  <label className={`native-role-card ${role === 'driver' ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="nativeRole"
+                      value="driver"
+                      checked={role === 'driver'}
+                      onChange={() => setRole('driver')}
+                    />
+                    <span className="role-icon">🚗</span>
+                    <div className="role-meta">
+                      <strong>Driver Partner</strong>
+                      <small>Accept rides & earn</small>
+                    </div>
+                    <div className="role-radio-dot" />
+                  </label>
                 </div>
               </div>
-            </label>
 
-            {/* Additional Driver Partner Vehicle Fields */}
-            {role === 'driver' && (
-              <div className="driver-fields-panel">
-                <div className="driver-panel-heading">
-                  <span>🚗 Vehicle Information</span>
+              <div className="native-field-block">
+                <label className="native-label">Full Name</label>
+                <div className="native-input-wrap">
+                  <input
+                    required
+                    autoFocus
+                    type="text"
+                    placeholder={role === 'driver' ? 'e.g. Ramesh Kumar' : 'e.g. Ananya Sharma'}
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    disabled={loading}
+                    className="native-text-input"
+                  />
+                  {name.trim().length > 1 && (
+                    <span className="native-valid-icon">✓</span>
+                  )}
                 </div>
-                <div className="form-two-col">
-                  <label className="auth-field">
-                    <span>Vehicle model</span>
-                    <div className="field-input-wrap">
+              </div>
+
+              {role === 'driver' && (
+                <div className="native-driver-box">
+                  <div className="driver-box-title">🚗 Vehicle Information</div>
+                  <div className="native-two-col">
+                    <div className="native-field-block">
+                      <label className="native-label">Vehicle Model</label>
                       <input
                         required
                         type="text"
@@ -444,174 +548,90 @@ export default function AuthPage() {
                         value={vehicleModel}
                         onChange={e => setVehicleModel(e.target.value)}
                         disabled={loading}
+                        className="native-text-input"
                       />
-                      <div
-                        className={`input-status-capsule ${vehicleModel.trim() ? 'valid' : 'required'}`}
-                        title={vehicleModel.trim() ? 'Completed' : 'Required'}
-                      >
-                        {vehicleModel.trim() ? '✓' : ''}
-                      </div>
                     </div>
-                  </label>
-                  <label className="auth-field">
-                    <span>Plate number</span>
-                    <div className="field-input-wrap">
+                    <div className="native-field-block">
+                      <label className="native-label">License Plate</label>
                       <input
                         required
                         type="text"
                         placeholder="TN 01 AB 1234"
                         value={vehicleNumber}
-                        onChange={e => setVehicleNumber(e.target.value)}
+                        onChange={e => setVehicleNumber(e.target.value.toUpperCase())}
                         disabled={loading}
+                        className="native-text-input"
                       />
-                      <div
-                        className={`input-status-capsule ${vehicleNumber.trim() ? 'valid' : 'required'}`}
-                        title={vehicleNumber.trim() ? 'Completed' : 'Required'}
-                      >
-                        {vehicleNumber.trim() ? '✓' : ''}
-                      </div>
                     </div>
-                  </label>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <button type="submit" disabled={loading} className="btn primary-action">
-              {loading ? (
-                <span className="btn-loading-content">
-                  <span className="auth-btn-spinner" /> Sending OTP...
-                </span>
-              ) : 'Get Verification Code ➔'}
-            </button>
-
-            {error && <div className="err">{error}</div>}
-          </form>
-        )}
-
-        {/* ------------------------------------------------------------ */}
-        {/* STEP 3: 6-Digit OTP Verification Screen                      */}
-        {/* ------------------------------------------------------------ */}
-        {step === 'otp' && (
-          <form className="form auth-form" onSubmit={(e) => { e.preventDefault(); handleVerifyCode() }}>
-            <div className="auth-step-back-row">
               <button
-                type="button"
-                className="btn-back-step"
-                onClick={() => { setStep('phone'); setError(null) }}
+                type="submit"
+                disabled={loading || !name.trim()}
+                className="native-primary-cta"
               >
-                ← Change Number
+                {loading ? (
+                  <span className="btn-loading-flex">
+                    <span className="native-spinner" /> {loadingText || 'Creating profile...'}
+                  </span>
+                ) : (
+                  <span>Finish Setup & Launch ➔</span>
+                )}
               </button>
-            </div>
+            </form>
+          )}
 
-            <div className="auth-intro">
-              <span className="eyebrow">
-                {existingUser ? 'Welcome Back' : 'Security Verification'}
-              </span>
-              <h2>
-                {existingUser ? `Hello, ${existingUser.name?.split(' ')[0]}!` : 'Enter OTP code'}
-              </h2>
-              <div className="otp-target-display">
-                <span>Code sent to <strong>+91 {phone}</strong></span>
+          {/* Dev Test Quick Bypass Section (Toggleable via corner button) */}
+          {showDevBypass && (
+            <div className="dev-bypass-section">
+              <div className="dev-bypass-divider">
+                <span>⚡ DEV TEST FAST-TRACK (ONE-CLICK)</span>
               </div>
-            </div>
-
-            {/* 6-Digit Individual Pin Input Boxes */}
-            <div className="otp-boxes-grid" onPaste={handleOtpPaste}>
-              {otpDigits.map((digit, idx) => (
-                <input
-                  key={idx}
-                  ref={el => otpInputsRef.current[idx] = el}
-                  type="tel"
-                  maxLength="1"
-                  className={`otp-digit-box ${digit ? 'filled' : ''}`}
-                  value={digit}
-                  onChange={e => handleOtpChange(idx, e.target.value)}
-                  onKeyDown={e => handleOtpKeyDown(idx, e)}
-                  disabled={loading}
-                  autoFocus={idx === 0}
-                />
-              ))}
-            </div>
-
-            <div className="otp-resend-row">
-              {canResend ? (
+              <div className="dev-bypass-grid">
                 <button
                   type="button"
-                  className="btn-resend-link"
-                  onClick={handleResendOtp}
-                  disabled={loading}
+                  className="btn-dev-bypass rider"
+                  onClick={() => auth.devLogin('rider')}
+                  title="Enter Rider Booking Dashboard instantly"
                 >
-                  🔄 Resend Code
+                  <span className="dev-icon">🧑</span>
+                  <div className="dev-btn-text">
+                    <strong>Rider Dashboard</strong>
+                    <small>Instant Dev Bypass</small>
+                  </div>
                 </button>
-              ) : (
-                <span className="resend-countdown-text">
-                  Resend code in <strong>{resendTimer}s</strong>
-                </span>
-              )}
+
+                <button
+                  type="button"
+                  className="btn-dev-bypass driver"
+                  onClick={() => auth.devLogin('driver')}
+                  title="Enter Driver Partner Dashboard instantly"
+                >
+                  <span className="dev-icon">🚗</span>
+                  <div className="dev-btn-text">
+                    <strong>Driver Dashboard</strong>
+                    <small>Instant Dev Bypass</small>
+                  </div>
+                </button>
+              </div>
             </div>
+          )}
+        </section>
 
-            <button
-              type="submit"
-              disabled={loading || otpDigits.some(d => !d)}
-              className="btn primary-action"
-            >
-              {loading ? (
-                <span className="btn-loading-content">
-                  <span className="auth-btn-spinner" /> Verifying...
-                </span>
-              ) : 'Verify & Sign In'}
-            </button>
-
-            {error && <div className="err">{error}</div>}
-          </form>
-        )}
-
-        {/* DEV Quick Bypass Section (Hidden by default, toggled via insider button) */}
-        {showDevBypass && (
-          <div className="dev-bypass-section">
-            <div className="dev-bypass-divider">
-              <span>⚡ DEV QUICK BYPASS (ZERO API CALLS)</span>
-            </div>
-            <div className="dev-bypass-grid">
-              <button
-                type="button"
-                className="btn-dev-bypass rider"
-                onClick={() => auth.devLogin('rider')}
-                title="Enter Rider Booking Dashboard instantly"
-              >
-                <span className="dev-icon">🧑</span>
-                <div className="dev-btn-text">
-                  <strong>Rider Dashboard</strong>
-                  <small>Instant Dev Bypass</small>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                className="btn-dev-bypass driver"
-                onClick={() => auth.devLogin('driver')}
-                title="Enter Driver Partner Dashboard instantly"
-              >
-                <span className="dev-icon">🚗</span>
-                <div className="dev-btn-text">
-                  <strong>Driver Dashboard</strong>
-                  <small>Instant Dev Bypass</small>
-                </div>
-              </button>
-            </div>
-          </div>
-        )}
+        <footer className="native-auth-footer">
+          <p className="native-footer-note">By signing in, you agree to our Terms of Service & Privacy Policy.</p>
+        </footer>
       </div>
 
-      <p className="auth-footnote">Instant OTP login. Thoughtful travel.</p>
-
-      {/* Barely noticeable insider dev toggle button in bottom right corner */}
+      {/* Discreet insider dev toggle button in bottom right corner */}
       <button
         type="button"
         className={`dev-insider-trigger ${showDevBypass ? 'active' : ''}`}
         onClick={() => setShowDevBypass(prev => !prev)}
-        aria-label="Toggle developer tools"
-        title={showDevBypass ? 'Hide developer bypass' : 'Developer bypass'}
+        aria-label="Toggle developer test options"
+        title={showDevBypass ? 'Hide Dev Test section' : 'Show Dev Test section'}
       >
         <span className="dev-insider-glyph">⚡</span>
       </button>

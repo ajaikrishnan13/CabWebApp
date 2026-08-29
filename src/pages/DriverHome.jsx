@@ -2,8 +2,39 @@ import React, { useEffect, useState } from 'react'
 import { auth, database } from '../database'
 import BirthdayPicker from '../components/BirthdayPicker'
 import logo from '../assets/logo.png'
+import logoWhite from '../assets/logo-white.png'
 
 export default function DriverHome({ user, onSignOut }) {
+  // Theme state synced with localStorage and html data-theme
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nd_theme')
+      if (saved) return saved === 'dark'
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+    } catch {
+      return false
+    }
+  })
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('nd_theme', darkMode ? 'dark' : 'light')
+      document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
+      const bg = darkMode ? '#0b1120' : '#f7f9fc'
+      document.documentElement.style.backgroundColor = bg
+      document.body.style.backgroundColor = bg
+      const meta = document.querySelector('meta[name="theme-color"]')
+      if (meta) meta.content = darkMode ? '#0b1120' : '#0b3977'
+    } catch (e) {
+      console.warn('Theme save notice:', e)
+    }
+  }, [darkMode])
+
+  const handleToggleDarkMode = () => {
+    setDarkMode(prev => !prev)
+  }
+
   const [profile, setProfile] = useState(() => ({
     name: user.user_metadata?.name || '',
     email: user.email || '',
@@ -52,19 +83,50 @@ export default function DriverHome({ user, onSignOut }) {
   const [profileMessage, setProfileMessage] = useState(null)
   const [profileSaved, setProfileSaved] = useState(false)
 
-  // Prevent background scrolling when any modal is open
-  const isAnyModalOpen = profileOpen || Boolean(selectedDriverTrip)
+  // Format scheduled datetime gracefully
+  const formatRideDateTime = (dt) => {
+    if (!dt) return 'As soon as possible'
+    try {
+      const d = new Date(dt)
+      if (isNaN(d.getTime())) return dt
+      return d.toLocaleString('en-IN', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+    } catch {
+      return dt
+    }
+  }
+
+  // Prevent background scrolling ONLY when an active modal is open, and guarantee release
+  const isAnyModalOpen = profileOpen || Boolean(selectedDriverTrip) || settingsOpen
   useEffect(() => {
     if (isAnyModalOpen) {
       document.body.classList.add('modal-open')
-      const originalOverflow = document.body.style.overflow
       document.body.style.overflow = 'hidden'
-      return () => {
-        document.body.classList.remove('modal-open')
-        document.body.style.overflow = originalOverflow
-      }
+    } else {
+      document.body.classList.remove('modal-open')
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.classList.remove('modal-open')
+      document.body.style.overflow = ''
     }
   }, [isAnyModalOpen])
+
+  // Always reset scroll state when component mounts
+  useEffect(() => {
+    document.body.classList.remove('modal-open')
+    document.body.style.overflow = ''
+    return () => {
+      document.body.classList.remove('modal-open')
+      document.body.style.overflow = ''
+    }
+  }, [])
 
   // Load driver data and live requests
   const refreshRequests = async () => {
@@ -246,7 +308,7 @@ export default function DriverHome({ user, onSignOut }) {
         <div className="site-header-inner">
           {/* Left: Brand */}
           <div className="header-brand">
-            <img src={logo} alt="Namma Driver logo" className="header-logo" />
+            <img src={darkMode ? logoWhite : logo} alt="Namma Driver logo" className="header-logo" />
             <div className="header-brand-text">
               <span className="brand-tagline">Private car service</span>
             </div>
@@ -277,6 +339,18 @@ export default function DriverHome({ user, onSignOut }) {
               <svg className="header-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg>
             </button>
 
+            {/* Settings & Dark Mode Toggle Button */}
+            <button
+              type="button"
+              className={`header-settings-btn ${settingsOpen ? 'active' : ''}`}
+              aria-label="Settings and dark mode"
+              title="Preferences & Dark Mode"
+              onClick={() => setSettingsOpen(prev => !prev)}
+            >
+              <span className="settings-icon">⚙️</span>
+              <span className="settings-label">Settings</span>
+            </button>
+
             {/* Sign out */}
             <button
               type="button"
@@ -293,6 +367,94 @@ export default function DriverHome({ user, onSignOut }) {
           </div>
         </div>
       </header>
+
+      {/* Settings Overlay Dropdown / Modal */}
+      {settingsOpen && (
+        <div
+          className="settings-overlay-backdrop"
+          role="presentation"
+          onMouseDown={e => e.target === e.currentTarget && setSettingsOpen(false)}
+        >
+          <div className="settings-overlay-card" role="dialog" aria-modal="true" aria-label="Driver App Preferences">
+            <div className="settings-overlay-header">
+              <div className="settings-header-title">
+                <span className="settings-header-icon">⚙️</span>
+                <h3>Driver App Preferences</h3>
+              </div>
+              <button
+                type="button"
+                className="settings-close-btn"
+                onClick={() => setSettingsOpen(false)}
+                aria-label="Close preferences"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="settings-overlay-content">
+              {/* Dark Mode Provision Toggle */}
+              <div className="settings-option-item">
+                <div className="settings-option-info">
+                  <div className="settings-option-label">
+                    <span className="option-emoji">🌙</span>
+                    <strong>Dark Mode</strong>
+                    <span className={`theme-badge ${darkMode ? 'dark' : 'light'}`}>
+                      {darkMode ? 'Active' : 'Off'}
+                    </span>
+                  </div>
+                  <p className="settings-option-desc">High-contrast nocturnal theme for nighttime shifts</p>
+                </div>
+                <label className="toggle-switch" aria-label="Toggle dark mode">
+                  <input
+                    type="checkbox"
+                    checked={darkMode}
+                    onChange={handleToggleDarkMode}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </div>
+
+              {/* Shift Online Status */}
+              <div className="settings-option-item">
+                <div className="settings-option-info">
+                  <div className="settings-option-label">
+                    <span className="option-emoji">🚗</span>
+                    <strong>Shift Availability</strong>
+                    <span className={`theme-badge ${isOnline ? 'live' : 'light'}`}>
+                      {isOnline ? 'On Duty' : 'Off Duty'}
+                    </span>
+                  </div>
+                  <p className="settings-option-desc">Control whether you are open for new bookings</p>
+                </div>
+                <label className="toggle-switch" aria-label="Toggle shift duty">
+                  <input
+                    type="checkbox"
+                    checked={isOnline}
+                    onChange={() => setIsOnline(!isOnline)}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </div>
+
+              {/* Commission Tier Status */}
+              <div className="settings-option-item">
+                <div className="settings-option-info">
+                  <div className="settings-option-label">
+                    <span className="option-emoji">✨</span>
+                    <strong>Platform Commission</strong>
+                  </div>
+                  <p className="settings-option-desc">0% introductory driver partner commission</p>
+                </div>
+                <span className="settings-status-pill green">0% PROMO</span>
+              </div>
+            </div>
+
+            <div className="settings-overlay-footer">
+              <span className="app-version-text">Namma Driver Partner • Driver Edition</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="content driver-content">
         {/* Driver Shift Control & Summary Banner */}
@@ -495,7 +657,7 @@ export default function DriverHome({ user, onSignOut }) {
                   </div>
 
                   <div className="req-datetime-tag">
-                    🗓️ Scheduled: {req.datetime}
+                    🗓️ Scheduled: {formatRideDateTime(req.datetime)}
                   </div>
 
                   <div className="req-card-actions">
@@ -569,34 +731,57 @@ export default function DriverHome({ user, onSignOut }) {
                   const fareVal = ride.estimatedFare || '₹350'
                   return (
                     <div key={ride.id} className="completed-item driver-trip-row">
-                      <div className="completed-info">
+                      {/* Card Header: Passenger & Payout */}
+                      <div className="driver-trip-header-row">
                         <div className="passenger-lead">
                           <span className="driver-pax-avatar">🧑</span>
-                          <strong>{ride.name || 'Passenger'}</strong>
-                          <span className="driver-trip-pill">✓ Completed</span>
+                          <div className="passenger-info-text">
+                            <strong className="passenger-name">{ride.name || 'Passenger'}</strong>
+                            <span className="driver-car-service-tag">{ride.carType || 'Sedan'}</span>
+                          </div>
                         </div>
-                        <div className="driver-route-preview">
-                          <span>📍 {ride.from.split(',')[0]}</span>
-                          <span className="route-arrow">➔</span>
-                          <span>🏁 {ride.to.split(',')[0]}</span>
-                        </div>
-                        <div className="driver-trip-meta">
-                          <span>{ride.carType}</span>
-                          <span>•</span>
-                          <span>{ride.datetime}</span>
-                          {ride.distance && <span>• {ride.distance}</span>}
+                        <div className="driver-fare-badge-wrap">
+                          <span className="completed-fare driver-payout-amount">+{fareVal}</span>
+                          <span className="driver-trip-pill">✓ Credited</span>
                         </div>
                       </div>
 
-                      <div className="driver-fare-col">
-                        <div className="completed-fare driver-payout-amount">
-                          +{fareVal}
+                      {/* Card Body: Structured Route with Full Width - Zero Word Breakage */}
+                      <div className="driver-route-track-box">
+                        <div className="driver-route-stop start">
+                          <span className="driver-stop-dot start" />
+                          <div className="driver-stop-content">
+                            <span className="driver-stop-label">PICKUP</span>
+                            <span className="driver-stop-address" title={ride.from}>
+                              {ride.from.split(',')[0]}
+                              {ride.from.split(',')[1] ? `, ${ride.from.split(',')[1].trim()}` : ''}
+                            </span>
+                          </div>
                         </div>
-                        <small className="payout-status-text">✓ Credited</small>
+                        <div className="driver-route-track-line" />
+                        <div className="driver-route-stop end">
+                          <span className="driver-stop-dot end" />
+                          <div className="driver-stop-content">
+                            <span className="driver-stop-label">DROP-OFF</span>
+                            <span className="driver-stop-address" title={ride.to}>
+                              {ride.to.split(',')[0]}
+                              {ride.to.split(',')[1] ? `, ${ride.to.split(',')[1].trim()}` : ''}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Footer: Timing, Distance & Action */}
+                      <div className="driver-trip-footer-row">
+                        <div className="driver-trip-meta-chips">
+                          <span className="driver-meta-chip">🗓️ {formatRideDateTime(ride.datetime)}</span>
+                          {ride.distance && <span className="driver-meta-chip">🛣️ {ride.distance}</span>}
+                        </div>
                         <button
                           type="button"
                           className="btn-driver-details"
                           onClick={() => setSelectedDriverTrip(ride)}
+                          aria-label={`View trip details for ${ride.name || 'Passenger'}`}
                         >
                           📄 Trip Details
                         </button>

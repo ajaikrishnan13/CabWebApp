@@ -80,6 +80,9 @@ export const auth = {
       } catch {
         listener(session?.user || null)
       }
+    }).catch(err => {
+      console.warn('Supabase getSession notice:', err)
+      listener(null)
     })
     return () => {
       devSubscribers.delete(listener)
@@ -399,15 +402,46 @@ export const auth = {
     if (error) throw error
   },
   async signOut() {
-    const { error } = await requireClient().auth.signOut()
-    if (error) throw error
+    try {
+      localStorage.removeItem('cab_dev_user')
+    } catch {}
+    devSubscribers.forEach(cb => {
+      try { cb(null) } catch {}
+    })
+    if (supabase) {
+      try {
+        await supabase.auth.signOut()
+      } catch (err) {
+        console.warn('Supabase auth.signOut notice:', err)
+      }
+    }
   },
   async updateProfile(profile, avatarFile) {
-    const client = requireClient()
-    const { data: { user: currentUser }, error: sessionError } = await client.auth.getUser()
-    if (sessionError || !currentUser) throw sessionError || new Error('Your session has expired. Please sign in again.')
+    let currentUser = null
+    const client = supabase
+    if (client) {
+      try {
+        const { data, error } = await client.auth.getUser()
+        if (!error && data?.user) {
+          currentUser = data.user
+        }
+      } catch (e) {
+        console.warn('Supabase auth.getUser notice:', e)
+      }
+    }
 
-    let avatarUrl = profile.avatarUrl !== undefined ? profile.avatarUrl : null
+    if (!currentUser) {
+      try {
+        const devStr = localStorage.getItem('cab_dev_user')
+        if (devStr) currentUser = JSON.parse(devStr)
+      } catch {}
+    }
+
+    if (!currentUser) {
+      throw new Error('Your session has expired. Please sign in again.')
+    }
+
+    let avatarUrl = profile.avatarUrl !== undefined ? profile.avatarUrl : (currentUser.user_metadata?.avatar_url || null)
 
     if (avatarFile) {
       // 1. Generate optimized client-side data URL as instant reliable fallback
@@ -419,26 +453,28 @@ export const auth = {
         console.warn('Canvas conversion notice:', e)
       }
 
-      // 2. Try Supabase Storage upload
-      try {
-        const extension = avatarFile.name?.split('.').pop()?.toLowerCase() || 'jpg'
-        const path = `${currentUser.id}/${Date.now()}_${crypto.randomUUID().slice(0, 8)}.${extension}`
-        const { error: uploadError } = await client.storage.from('avatars').upload(path, avatarFile, {
-          contentType: avatarFile.type || 'image/jpeg',
-          upsert: true
-        })
+      // 2. Try Supabase Storage upload if client is available
+      if (client) {
+        try {
+          const extension = avatarFile.name?.split('.').pop()?.toLowerCase() || 'jpg'
+          const path = `${currentUser.id}/${Date.now()}_${crypto.randomUUID().slice(0, 8)}.${extension}`
+          const { error: uploadError } = await client.storage.from('avatars').upload(path, avatarFile, {
+            contentType: avatarFile.type || 'image/jpeg',
+            upsert: true
+          })
 
-        if (!uploadError) {
-          const { data: publicData } = client.storage.from('avatars').getPublicUrl(path)
-          const { data: signedData } = await client.storage.from('avatars').createSignedUrl(path, 60 * 60 * 24 * 365)
-          avatarUrl = signedData?.signedUrl || publicData?.publicUrl || fallbackDataUrl || avatarUrl
-        } else {
-          console.warn('Supabase storage upload notice (using optimized image data URL instead):', uploadError.message)
+          if (!uploadError) {
+            const { data: publicData } = client.storage.from('avatars').getPublicUrl(path)
+            const { data: signedData } = await client.storage.from('avatars').createSignedUrl(path, 60 * 60 * 24 * 365)
+            avatarUrl = signedData?.signedUrl || publicData?.publicUrl || fallbackDataUrl || avatarUrl
+          } else {
+            console.warn('Supabase storage notice (using optimized data URL):', uploadError.message)
+            avatarUrl = fallbackDataUrl || avatarUrl
+          }
+        } catch (err) {
+          console.warn('Storage upload notice (using optimized data URL):', err)
           avatarUrl = fallbackDataUrl || avatarUrl
         }
-      } catch (err) {
-        console.warn('Storage upload error (using optimized image data URL instead):', err)
-        avatarUrl = fallbackDataUrl || avatarUrl
       }
     }
 
@@ -446,52 +482,98 @@ export const auth = {
     const cleanPhone = (profile.phone || '').trim()
     const cleanEmail = (profile.email || currentUser.email || '').trim()
     const cleanBirthday = profile.birthday || null
+    const cleanVehicleNumber = (profile.vehicleNumber !== undefined ? profile.vehicleNumber : (currentUser.user_metadata?.vehicleNumber || '')).trim()
+    const cleanVehicleModel = (profile.vehicleModel !== undefined ? profile.vehicleModel : (currentUser.user_metadata?.vehicleModel || '')).trim()
 
-    const updatePayload = {
-      data: {
-        name: cleanName,
-        phone: cleanPhone,
-        birthday: cleanBirthday,
-        avatar_url: avatarUrl
+    let activeUser = currentUser
+
+    // Try Supabase auth.updateUser if session active
+    if (client) {
+      try {
+        const updatePayload = {
+          data: {
+            name: cleanName,
+            phone: cleanPhone,
+            birthday: cleanBirthday,
+            avatar_url: avatarUrl,
+            vehicleNumber: cleanVehicleNumber,
+            vehicleModel: cleanVehicleModel
+          }
+        }
+
+        if (cleanEmail && cleanEmail.toLowerCase() !== (currentUser.email || '').toLowerCase()) {
+          updatePayload.email = cleanEmail
+        }
+
+        const { data: authResult } = await client.auth.updateUser(updatePayload)
+        if (authResult?.user) {
+          activeUser = authResult.user
+        }
+      } catch (authErr) {
+        console.warn('Supabase auth.updateUser notice (proceeding with session sync):', authErr)
       }
     }
 
-    // Only update auth email if explicitly changed
-    if (cleanEmail && cleanEmail.toLowerCase() !== (currentUser.email || '').toLowerCase()) {
-      updatePayload.email = cleanEmail
+    // Persist to profiles table if Supabase is connected
+    if (client && activeUser.id) {
+      try {
+        await client.from('profiles').upsert({
+          id: activeUser.id,
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone || null,
+          birthday: cleanBirthday,
+          avatar_url: avatarUrl,
+          vehicle_number: cleanVehicleNumber || null,
+          vehicle_model: cleanVehicleModel || null,
+          updated_at: new Date().toISOString()
+        })
+      } catch (err) {
+        console.warn('Profiles table sync notice:', err)
+      }
     }
 
-    const { data: authResult, error: authError } = await client.auth.updateUser(updatePayload)
-    if (authError) throw authError
-
-    const activeUser = authResult?.user || currentUser
-
-    // Persist to profiles table
-    try {
-      const { error: profileError } = await client.from('profiles').upsert({
-        id: activeUser.id,
+    const updatedUser = {
+      ...activeUser,
+      email: cleanEmail || activeUser.email,
+      user_metadata: {
+        ...(activeUser.user_metadata || {}),
         name: cleanName,
-        email: cleanEmail,
-        phone: cleanPhone || null,
+        phone: cleanPhone,
         birthday: cleanBirthday,
         avatar_url: avatarUrl,
-        updated_at: new Date().toISOString()
-      })
-      if (profileError) console.warn('Profiles table sync notice:', profileError.message)
-    } catch (err) {
-      console.warn('Profiles sync error:', err)
-    }
-
-    return {
-      ...activeUser,
-      user_metadata: {
-        ...activeUser.user_metadata,
-        name: cleanName,
-        phone: cleanPhone,
-        birthday: cleanBirthday,
-        avatar_url: avatarUrl
+        vehicleNumber: cleanVehicleNumber,
+        vehicleModel: cleanVehicleModel
       }
     }
+
+    // Persist to verified local session
+    try {
+      localStorage.setItem('cab_dev_user', JSON.stringify(updatedUser))
+    } catch {}
+
+    // Update phone registry directory
+    try {
+      const regDir = JSON.parse(localStorage.getItem('cab_phone_registry') || '{}')
+      if (cleanPhone) {
+        regDir[cleanPhone] = {
+          name: cleanName,
+          role: updatedUser.user_metadata?.role || 'rider',
+          vehicleModel: cleanVehicleModel,
+          vehicleNumber: cleanVehicleNumber,
+          birthday: cleanBirthday,
+          avatarUrl
+        }
+        localStorage.setItem('cab_phone_registry', JSON.stringify(regDir))
+      }
+    } catch {}
+
+    // Broadcast update
+    devSubscribers.forEach(cb => {
+      try { cb(updatedUser) } catch {}
+    })
+
+    return updatedUser
   }
 }
 

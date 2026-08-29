@@ -4,6 +4,28 @@ import { loadGoogleMapsScript, reverseGeocodeGoogle, searchGooglePlaces, geocode
 // Default center: Local metropolitan area (Chennai, India)
 const DEFAULT_CENTER = [12.92404, 80.11550]
 
+const darkMapStyles = [
+  { elementType: "geometry", stylers: [{ color: "#1d2c4d" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#8ec3b9" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#1a3646" }] },
+  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#4b6878" }] },
+  { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#4b6878" }] },
+  { featureType: "landscape.man_made", elementType: "geometry.stroke", stylers: [{ color: "#334e87" }] },
+  { featureType: "landscape.natural", elementType: "geometry", stylers: [{ color: "#021019" }] },
+  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#283d6a" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#6f9ba5" }] },
+  { featureType: "poi", elementType: "labels.text.stroke", stylers: [{ color: "#1d2c4d" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#304a7d" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#98a5be" }] },
+  { featureType: "road", elementType: "labels.text.stroke", stylers: [{ color: "#1d2c4d" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#2c6675" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#255463" }] },
+  { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#b0d5ce" }] },
+  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2f3948" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0e1626" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#4e6d70" }] }
+]
+
 export default function MapPickerModal({
   isOpen,
   title = 'Select Location on Map',
@@ -11,7 +33,8 @@ export default function MapPickerModal({
   initialCoords = null,
   initialAddress = '',
   onConfirm,
-  onClose
+  onClose,
+  isDarkMode = false
 }) {
   const mapContainerRef = useRef(null)
   const googleMapRef = useRef(null)
@@ -95,11 +118,18 @@ export default function MapPickerModal({
           const map = new maps.Map(mapContainerRef.current, {
             center: centerObj,
             zoom: 15,
+            disableDefaultUI: true,
             zoomControl: true,
+            keyboardShortcuts: false,
+            gestureHandling: 'greedy',
             mapTypeControl: false,
             streetViewControl: false,
-            fullscreenControl: false
+            fullscreenControl: false,
+            styles: isDarkMode ? darkMapStyles : []
           })
+
+          const trafficLayer = new maps.TrafficLayer()
+          trafficLayer.setMap(map)
 
           const marker = new maps.Marker({
             position: centerObj,
@@ -208,6 +238,15 @@ export default function MapPickerModal({
       googleMarkerRef.current = null
     }
   }, [isOpen])
+
+  // Dynamically update map theme when isDarkMode changes
+  useEffect(() => {
+    if (googleMapRef.current) {
+      googleMapRef.current.setOptions({
+        styles: isDarkMode ? darkMapStyles : []
+      })
+    }
+  }, [isDarkMode])
 
   // Handle Location Search Input
   const handleSearchChange = (val) => {
