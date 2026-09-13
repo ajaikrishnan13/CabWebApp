@@ -261,7 +261,9 @@ export default function TripHistoryView({
                   </div>
 
                   <div className="trip-card-footer-actions hub-footer-actions">
-                    <span className="trip-id-crumb">Trip ID: #{b.id?.slice(-6).toUpperCase()}</span>
+                    <span className="trip-id-crumb">
+                      Trip ID: #ND-{String(b.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'TRIP'}
+                    </span>
                     <button
                       type="button"
                       className="btn-view-receipt"

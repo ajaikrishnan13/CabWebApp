@@ -273,7 +273,6 @@ export default function TripPreviewModal({
   }
 
   const st = statusMap[trip.status] || statusMap.requested
-  const tripIdStr = trip.id ? `#${trip.id.slice(-6).toUpperCase()}` : '#TRIP'
   const fromAddr = trip.from || trip.from_location || 'Pickup location'
   const toAddr = trip.to || trip.to_location || 'Drop-off destination'
   const car = trip.carType || trip.car_type || 'Sedan'
@@ -281,6 +280,34 @@ export default function TripPreviewModal({
   const rawFare = String(trip.estimatedFare || trip.estimated_fare || '₹450')
   const fareNumeric = parseInt(rawFare.replace(/[^\d]/g, ''), 10) || 450
   const baseFare = Math.max(100, fareNumeric - 70)
+
+  // Clean, consistent booking reference code (e.g. #ND-66XY)
+  const cleanId = String(trip.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'TRIP'
+  const refCode = `#ND-${cleanId}`
+
+  // Meaningful, human-readable trip title based on the destination or route
+  const getDisplayTitle = () => {
+    const cleanPlace = (addr) => {
+      if (!addr) return ''
+      return addr.split(',')[0].trim()
+    }
+
+    const toPlace = cleanPlace(toAddr)
+    const fromPlace = cleanPlace(fromAddr)
+
+    const isGenericDrop = !toPlace || /^(drop|destination|drop-off)/i.test(toPlace)
+    const isGenericPickup = !fromPlace || /^(pickup|start|current)/i.test(fromPlace)
+
+    if (!isGenericDrop) {
+      return `Trip to ${toPlace}`
+    }
+    if (!isGenericPickup) {
+      return `Trip from ${fromPlace}`
+    }
+    return `${car} ${service} Ride`
+  }
+
+  const tripDisplayTitle = getDisplayTitle()
 
   const dt = trip.datetime ? new Date(trip.datetime) : (trip.createdAt ? new Date(trip.createdAt) : null)
   const isValidDate = Boolean(dt && !isNaN(dt.getTime()))
@@ -302,9 +329,16 @@ export default function TripPreviewModal({
       <section className="profile-modal trip-preview-modal" role="dialog" aria-modal="true">
         {/* Modal Header */}
         <div className="modal-heading trip-preview-heading">
-          <div>
-            <span className="eyebrow">Trip Preview & Receipt</span>
-            <h2>Ride {tripIdStr}</h2>
+          <div className="trip-heading-content">
+            <div className="trip-heading-eyebrow-row">
+              <span className="eyebrow trip-eyebrow-label">Trip Preview & Receipt</span>
+              <span className="trip-ref-code" title={`Booking Reference: ${trip.id || refCode}`}>
+                {refCode}
+              </span>
+            </div>
+            <h2 className="trip-preview-title" title={`${fromAddr} → ${toAddr}`}>
+              {tripDisplayTitle}
+            </h2>
           </div>
           <button
             type="button"
@@ -437,7 +471,7 @@ export default function TripPreviewModal({
               type="button"
               className="btn-preview-download"
               onClick={() => {
-                alert(`Official invoice for Ride ${tripIdStr} downloaded to your device.`)
+                alert(`Official invoice for ${tripDisplayTitle} (${refCode}) downloaded to your device.`)
               }}
             >
               📥 Download Invoice (PDF)
