@@ -7052,6 +7052,12 @@ body.modal-open {
 	pointer-events: none;
 }
 
+/* Dark mode street map filter: transforms standard OSM tiles into sleek dark mode without requiring API keys */
+[data-theme="dark"] .trip-route-snapshot-map .leaflet-tile-pane,
+.trip-route-snapshot-map.dark-mode .leaflet-tile-pane {
+	filter: brightness(0.62) invert(1) contrast(1.25) hue-rotate(200deg) saturate(0.35);
+}
+
 .route-tag {
 	position: absolute;
 	top: 12px;

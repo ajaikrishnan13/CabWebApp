@@ -62,22 +62,12 @@ function RideRouteMapSnapshot({
           keyboard: false
         })
 
-        // Use CartoDB Voyager for crisp modern city roads, or CartoDB Dark for dark mode
-        const tileUrl = isDarkMode
-          ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-          : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
-
-        const tiles = L.tileLayer(tileUrl, {
-          maxZoom: 18,
-          subdomains: 'abcd'
+        // Standard OpenStreetMap street tiles (authentic streets, 100% free, zero API key required)
+        const tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+        L.tileLayer(tileUrl, {
+          maxZoom: 19,
+          attribution: '© OpenStreetMap'
         }).addTo(map)
-
-        // Fallback to standard OpenStreetMap if CartoDB experiences any network issue
-        tiles.on('tileerror', () => {
-          if (tiles._url !== 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png') {
-            tiles.setUrl('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png')
-          }
-        })
 
         // Outer contrast casing road line
         L.polyline(pts, {
@@ -157,7 +147,7 @@ function RideRouteMapSnapshot({
 
   return (
     <div className="trip-route-image-card">
-      <div ref={mapElRef} className="trip-route-snapshot-map" />
+      <div ref={mapElRef} className={`trip-route-snapshot-map ${isDarkMode ? 'dark-mode' : ''}`} />
 
       {/* Start Ride Location Tag */}
       <div className="route-tag start-tag">
