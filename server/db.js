@@ -4,11 +4,35 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const dataDir = path.join(__dirname, 'data')
-const dbPath = path.join(dataDir, 'namma_driver.db')
 
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true })
+// Load .env variables if present
+const envPath = path.join(__dirname, '..', '.env')
+if (fs.existsSync(envPath)) {
+  try {
+    const envContent = fs.readFileSync(envPath, 'utf8')
+    envContent.split('\n').forEach(line => {
+      const trimmed = line.trim()
+      if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+        const [key, ...vals] = trimmed.split('=')
+        const k = key.trim()
+        if (!process.env[k]) {
+          process.env[k] = vals.join('=').trim().replace(/^['"]|['"]$/g, '')
+        }
+      }
+    })
+  } catch (err) {
+    console.warn('Notice: Could not parse .env file:', err.message)
+  }
+}
+
+// Configurable database location (defaults to local server/data directory, or custom server location)
+const defaultDataDir = path.join(__dirname, 'data')
+const dataDir = process.env.DATABASE_DIR || defaultDataDir
+const dbPath = process.env.DATABASE_PATH || path.join(dataDir, 'namma_driver.db')
+
+const targetDir = path.dirname(dbPath)
+if (!fs.existsSync(targetDir)) {
+  fs.mkdirSync(targetDir, { recursive: true })
 }
 
 let db = null
