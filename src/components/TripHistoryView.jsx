@@ -223,7 +223,20 @@ export default function TripHistoryView({
               const serviceName = b.serviceType || b.service_type || 'Point-to-Point'
 
               return (
-                <li key={b.id || Math.random()} className="booking-item trip-history-card hub-trip-card">
+                <li
+                  key={b.id || Math.random()}
+                  className="booking-item trip-history-card hub-trip-card"
+                  onClick={() => onSelectReceipt(b)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelectReceipt(b)
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`View ride preview and details for trip from ${fromName} to ${toName}`}
+                >
                   <div className="booking-item-top">
                     <div className="booking-route">
                       <span className="booking-from" title={fromName}>📍 {fromName.split(',')[0]}</span>
@@ -252,9 +265,12 @@ export default function TripHistoryView({
                     <button
                       type="button"
                       className="btn-view-receipt"
-                      onClick={() => onSelectReceipt(b)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onSelectReceipt(b)
+                      }}
                     >
-                      🧾 View Invoice & Details
+                      🗺️ Preview Ride & Invoice ➔
                     </button>
                   </div>
                 </li>

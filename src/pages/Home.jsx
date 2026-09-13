@@ -5,8 +5,9 @@ import BirthdayPicker from '../components/BirthdayPicker'
 import MapPickerModal from '../components/MapPickerModal'
 import TripHistoryView from '../components/TripHistoryView'
 import RoutePreviewMap from '../components/RoutePreviewMap'
+import TripPreviewModal from '../components/TripPreviewModal'
 import { calculateEstimatedFare, VEHICLE_RATES } from '../utils/fareCalculator'
-import { getGoogleDirections, isGoogleMapsConfigured, searchGooglePlaces, geocodePlaceId, reverseGeocodeGoogle } from '../utils/googleMaps'
+import { getGoogleDirections, isGoogleMapsConfigured, searchGooglePlaces, geocodePlaceId, reverseGeocodeGoogle, calculateEta } from '../utils/googleMaps'
 import logo from '../assets/logo.png'
 import logoWhite from '../assets/logo-white.png'
 import sedanImage from '../assets/sedan.png'
@@ -73,6 +74,7 @@ export default function Home({ user, onSignOut }) {
   const [fromCoords, setFromCoords] = useState(null)
   const [toCoords, setToCoords] = useState(null)
   const [routeInfo, setRouteInfo] = useState(null)
+  const [routeCoordinates, setRouteCoordinates] = useState([])
   const [routeGeoJson, setRouteGeoJson] = useState(null)
   const [googleDirectionsResult, setGoogleDirectionsResult] = useState(null)
   const [estimatedFare, setEstimatedFare] = useState(null)
@@ -209,6 +211,27 @@ export default function Home({ user, onSignOut }) {
     setDarkMode(prev => !prev)
   }
 
+  // Re-book a past or scheduled trip
+  const handleRebookTrip = (tripData) => {
+    if (!tripData) return
+    setFrom(tripData.from || '')
+    setTo(tripData.to || '')
+    if (tripData.fromCoords) {
+      setFromCoords(tripData.fromCoords)
+      fromCoordsRef.current = tripData.fromCoords
+    }
+    if (tripData.toCoords) {
+      setToCoords(tripData.toCoords)
+      toCoordsRef.current = tripData.toCoords
+    }
+    if (tripData.carType) setCarType(tripData.carType)
+    if (tripData.serviceType) setServiceType(tripData.serviceType)
+    setSelectedReceipt(null)
+    setActiveView('home')
+    setStepMode('ride_options')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   // Sticky header scroll state
   const [headerScrolled, setHeaderScrolled] = useState(false)
   useEffect(() => {
@@ -261,11 +284,12 @@ export default function Home({ user, onSignOut }) {
   // Past datetime check (allow up to 15 min buffer to prevent locking for present time)
   const isPastDatetime = datetime ? new Date(datetime).getTime() < (Date.now() - 15 * 60 * 1000) : false
 
-  // Calculate route and journey details with Google Maps live traffic
+  // Calculate route and journey details with Google Maps live traffic & fallback
   useEffect(() => {
     if (!fromCoords || !toCoords) {
       setRouteInfo(null)
       setGoogleDirectionsResult(null)
+      setRouteCoordinates([])
       setEstimatedFare(null)
       return
     }
@@ -279,6 +303,7 @@ export default function Home({ user, onSignOut }) {
         if (!isMounted) return
 
         setGoogleDirectionsResult(googleResult.directionsResult)
+        setRouteCoordinates(googleResult.routeCoordinates || [])
         setRouteInfo({
           distance: googleResult.distance,
           distanceKm: googleResult.distanceKm,
@@ -287,11 +312,12 @@ export default function Home({ user, onSignOut }) {
           hasTrafficDelay: googleResult.hasTrafficDelay,
           trafficText: googleResult.trafficText,
           summary: googleResult.summary,
-          isGoogleMaps: true
+          isGoogleMaps: googleResult.isGoogleMaps
         })
       } catch (err) {
         if (isMounted) {
-          console.error('Google Maps route calculation notice:', err)
+          console.error('Route calculation notice:', err)
+          setRouteCoordinates([])
           setRouteInfo({ error: 'Route estimate unavailable' })
         }
       } finally {
@@ -945,6 +971,8 @@ export default function Home({ user, onSignOut }) {
               fromCoords={fromCoords}
               toCoords={toCoords}
               googleDirectionsResult={googleDirectionsResult}
+              routeCoordinates={routeCoordinates}
+              routeInfo={routeInfo}
               className="rapido-map-canvas"
               onLocateMe={handleUseCurrentLocation}
               isDarkMode={darkMode}
@@ -1067,6 +1095,7 @@ export default function Home({ user, onSignOut }) {
                           toCoordsRef.current = null
                           setRouteInfo(null)
                           setGoogleDirectionsResult(null)
+                          setRouteCoordinates([])
                           setToSuggestions([])
                         }}
                         aria-label="Clear input"
@@ -1154,6 +1183,54 @@ export default function Home({ user, onSignOut }) {
                   )}
                 </div>
 
+                {/* Prominent Route Ready Overview in Search Mode */}
+                {hasRoute && routeInfo && (
+                  <div className="search-route-summary-card" onClick={handleProceedToRide} role="button" tabIndex={0}>
+                    <div className="summary-card-header">
+                      <span className="summary-card-badge">📍 ROUTE OVERVIEW</span>
+                      <span className="summary-card-traffic">
+                        {routeInfo.hasTrafficDelay ? '⚠️ Congestion' : '🟢 Live Traffic'}
+                      </span>
+                    </div>
+                    <div className="summary-card-stops">
+                      <div className="summary-stop">
+                        <span className="summary-stop-dot pickup" />
+                        <span className="summary-stop-text" title={from}>{from}</span>
+                      </div>
+                      <div className="summary-stop-arrow">➔</div>
+                      <div className="summary-stop">
+                        <span className="summary-stop-dot drop" />
+                        <span className="summary-stop-text dest" title={to}>{to}</span>
+                      </div>
+                    </div>
+                    <div className="summary-metrics-row">
+                      <div className="summary-metric">
+                        <span className="metric-icon">🚗</span>
+                        <div className="metric-text-group">
+                          <strong>{routeInfo.distanceKm} km</strong>
+                          <small>Distance</small>
+                        </div>
+                      </div>
+                      <div className="summary-metric-divider" />
+                      <div className="summary-metric">
+                        <span className="metric-icon">⏱️</span>
+                        <div className="metric-text-group">
+                          <strong>{routeInfo.durationMinutes} min</strong>
+                          <small>Travel Time</small>
+                        </div>
+                      </div>
+                      <div className="summary-metric-divider" />
+                      <div className="summary-metric">
+                        <span className="metric-icon">🕒</span>
+                        <div className="metric-text-group">
+                          <strong>{calculateEta(routeInfo.durationMinutes)}</strong>
+                          <small>Arrival ETA</small>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* 4. Prominent Request Ride Submit Button */}
                 <button
                   type="button"
@@ -1199,33 +1276,84 @@ export default function Home({ user, onSignOut }) {
             {/* STEP 2: Progressive Ride Selection Tray (When destination is set) */}
             {hasRoute && stepMode === 'ride_options' && (
               <div className="rapido-options-content">
-                {/* Route Header Strip with Distance, Time & Edit button */}
-                <div className="rapido-route-header-strip">
-                  <div className="route-header-stops">
-                    <div className="stop-item">
-                      <span className="stop-dot pickup" />
-                      <span className="stop-name" title={from}>{from.split(',')[0]}</span>
-                    </div>
-                    <div className="stop-connector" />
-                    <div className="stop-item">
-                      <span className="stop-dot drop" />
-                      <span className="stop-name destination" title={to}><strong>{to.split(',')[0]}</strong></span>
-                    </div>
-                  </div>
-
-                  <div className="route-header-right">
-                    <div className="route-stat-tag">
-                      <strong>{routeInfo.distanceKm} km</strong>
-                      <small>• {routeInfo.durationMinutes} min</small>
+                {/* Prominent Journey Overview Panel */}
+                <div className="prominent-journey-card">
+                  <div className="journey-card-top-row">
+                    <div className="journey-card-badge-wrap">
+                      <span className="journey-badge-pill">🗺️ JOURNEY OVERVIEW</span>
+                      <span className={`journey-traffic-pill ${routeInfo.hasTrafficDelay ? 'traffic-slow' : 'traffic-fast'}`}>
+                        {routeInfo.hasTrafficDelay ? '⚠️ Traffic Delay (+min)' : '🟢 Fastest Live Route'}
+                      </span>
                     </div>
                     <button
                       type="button"
-                      className="btn-route-edit"
+                      className="btn-journey-edit"
                       onClick={() => setStepMode('search')}
-                      title="Change destination"
+                      title="Change pickup or destination"
                     >
                       ✎ Change
                     </button>
+                  </div>
+
+                  {/* Locations Flow */}
+                  <div className="journey-locations-flow">
+                    <div className="journey-location-stop">
+                      <div className="stop-marker-column">
+                        <span className="stop-dot pickup" />
+                        <span className="stop-line" />
+                      </div>
+                      <div className="stop-info">
+                        <span className="stop-label">PICKUP LOCATION</span>
+                        <span className="stop-address" title={from}>{from}</span>
+                      </div>
+                    </div>
+                    <div className="journey-location-stop">
+                      <div className="stop-marker-column">
+                        <span className="stop-dot drop" />
+                      </div>
+                      <div className="stop-info">
+                        <span className="stop-label">DROP-OFF DESTINATION</span>
+                        <span className="stop-address dest" title={to}>{to}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3 Bold Metric Overview Cards */}
+                  <div className="journey-metrics-grid">
+                    <div className="journey-metric-box distance">
+                      <div className="metric-box-header">
+                        <span className="metric-box-icon">🚗</span>
+                        <span className="metric-box-title">DISTANCE</span>
+                      </div>
+                      <div className="metric-box-value">
+                        <span className="value-num">{routeInfo.distanceKm}</span>
+                        <span className="value-unit">km</span>
+                      </div>
+                      <span className="metric-box-sub">{routeInfo.summary || 'Optimal Route'}</span>
+                    </div>
+
+                    <div className="journey-metric-box duration">
+                      <div className="metric-box-header">
+                        <span className="metric-box-icon">⏱️</span>
+                        <span className="metric-box-title">TRAVEL TIME</span>
+                      </div>
+                      <div className="metric-box-value">
+                        <span className="value-num">{routeInfo.durationMinutes}</span>
+                        <span className="value-unit">min</span>
+                      </div>
+                      <span className="metric-box-sub">{routeInfo.hasTrafficDelay ? 'Traffic delay' : 'Normal traffic'}</span>
+                    </div>
+
+                    <div className="journey-metric-box eta">
+                      <div className="metric-box-header">
+                        <span className="metric-box-icon">🕒</span>
+                        <span className="metric-box-title">EST. ARRIVAL</span>
+                      </div>
+                      <div className="metric-box-value">
+                        <span className="value-num">{calculateEta(routeInfo.durationMinutes)}</span>
+                      </div>
+                      <span className="metric-box-sub">Expected ETA</span>
+                    </div>
                   </div>
                 </div>
 
@@ -1414,104 +1542,14 @@ export default function Home({ user, onSignOut }) {
         </div>
       )}
 
-      {/* Rider Trip Receipt & Invoice Modal */}
+      {/* Rider Trip Preview & Invoice Modal with Interactive Map */}
       {selectedReceipt && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={e => e.target === e.currentTarget && setSelectedReceipt(null)}
-        >
-          <section className="profile-modal receipt-modal" role="dialog" aria-modal="true">
-            <div className="modal-heading">
-              <div>
-                <span className="eyebrow">Trip Invoice & Summary</span>
-                <h2>Ride #{selectedReceipt.id.slice(-6).toUpperCase()}</h2>
-              </div>
-              <button
-                type="button"
-                className="modal-close"
-                onClick={() => setSelectedReceipt(null)}
-                aria-label="Close invoice"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="receipt-content">
-              <div className="receipt-status-banner">
-                <span className={`booking-status-badge ${selectedReceipt.status === 'completed' ? 'status-completed' : 'status-confirmed'}`}>
-                  {selectedReceipt.status === 'completed' ? '✓ Trip Completed' : selectedReceipt.status}
-                </span>
-                <span className="receipt-datetime">
-                  🗓️ {selectedReceipt.datetime}
-                </span>
-              </div>
-
-              <div className="receipt-route-box">
-                <div className="receipt-stop">
-                  <span className="receipt-marker start">📍</span>
-                  <div>
-                    <small>PICKUP ADDRESS</small>
-                    <p>{selectedReceipt.from}</p>
-                  </div>
-                </div>
-                <div className="receipt-stop">
-                  <span className="receipt-marker end">🏁</span>
-                  <div>
-                    <small>DESTINATION</small>
-                    <p>{selectedReceipt.to}</p>
-                  </div>
-                </div>
-              </div>
-
-              {selectedReceipt.driver && (
-                <div className="receipt-driver-card">
-                  <div className="driver-avatar-mini">🚗</div>
-                  <div className="driver-receipt-info">
-                    <strong>{selectedReceipt.driver.name}</strong>
-                    <span>{selectedReceipt.driver.vehicleModel} • {selectedReceipt.driver.vehicleNumber}</span>
-                  </div>
-                  {selectedReceipt.driver.phone && (
-                    <a href={`tel:${selectedReceipt.driver.phone}`} className="btn-driver-call">
-                      📞 Call
-                    </a>
-                  )}
-                </div>
-              )}
-
-              <div className="receipt-fare-breakdown">
-                <h4>Fare Breakdown</h4>
-                <div className="fare-row">
-                  <span>Vehicle & Service</span>
-                  <strong>{selectedReceipt.carType} • {selectedReceipt.serviceType}</strong>
-                </div>
-                <div className="fare-row">
-                  <span>Base Fare</span>
-                  <span>₹{Math.max(120, parseInt((selectedReceipt.estimatedFare || '400').replace(/[^\d]/g, ''), 10) - 70)}</span>
-                </div>
-                <div className="fare-row">
-                  <span>Tolls & Fuel Allowance</span>
-                  <span>₹70</span>
-                </div>
-                <div className="fare-row total">
-                  <strong>Total Paid</strong>
-                  <strong className="receipt-total-amount">{selectedReceipt.estimatedFare || '₹400'}</strong>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                className="btn primary-action"
-                onClick={() => {
-                  alert('Receipt downloaded to your device.')
-                  setSelectedReceipt(null)
-                }}
-              >
-                📥 Download Invoice (PDF)
-              </button>
-            </div>
-          </section>
-        </div>
+        <TripPreviewModal
+          trip={selectedReceipt}
+          onClose={() => setSelectedReceipt(null)}
+          onRebook={handleRebookTrip}
+          isDarkMode={darkMode}
+        />
       )}
 
     </main>

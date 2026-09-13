@@ -169,8 +169,23 @@ export async function getGoogleDirections(fromCoords, toCoords) {
               formattedDuration = `${durMin} min`
             }
 
+            let routeCoordinates = []
+            if (route.overview_path && route.overview_path.length > 0) {
+              routeCoordinates = route.overview_path.map(pt => [pt.lat(), pt.lng()])
+            } else if (leg.steps && leg.steps.length > 0) {
+              leg.steps.forEach(step => {
+                if (step.path) {
+                  step.path.forEach(pt => routeCoordinates.push([pt.lat(), pt.lng()]))
+                }
+              })
+            }
+            if (routeCoordinates.length === 0) {
+              routeCoordinates = [fromCoords, toCoords]
+            }
+
             resolve({
               directionsResult: result,
+              routeCoordinates,
               distance: `${distKm} km`,
               distanceKm: distKm,
               duration: formattedDuration,
@@ -214,8 +229,13 @@ export async function getGoogleDirections(fromCoords, toCoords) {
         formattedDuration = `${durMin} min`
       }
 
+      const routeCoordinates = route.geometry && route.geometry.coordinates && route.geometry.coordinates.length > 0
+        ? route.geometry.coordinates.map(pt => [pt[1], pt[0]])
+        : [fromCoords, toCoords]
+
       return {
         directionsResult: null,
+        routeCoordinates,
         distance: `${distKm} km`,
         distanceKm: distKm,
         duration: formattedDuration,
@@ -223,7 +243,7 @@ export async function getGoogleDirections(fromCoords, toCoords) {
         normalDurationMinutes: durMin,
         hasTrafficDelay: false,
         trafficText: formattedDuration,
-        summary: route.legs?.[0]?.summary ? `via ${route.legs[0].summary}` : 'Direct Route',
+        summary: route.legs?.[0]?.summary ? `via ${route.legs[0].summary}` : 'Optimal Direct Route',
         isGoogleMaps: false
       }
     }
@@ -246,6 +266,7 @@ export async function getGoogleDirections(fromCoords, toCoords) {
 
   return {
     directionsResult: null,
+    routeCoordinates: [fromCoords, toCoords],
     distance: `${drivingEstKm} km`,
     distanceKm: drivingEstKm,
     duration: estMin >= 60 ? `${Math.floor(estMin / 60)}h ${estMin % 60}m` : `${estMin} min`,
@@ -255,6 +276,16 @@ export async function getGoogleDirections(fromCoords, toCoords) {
     summary: 'Estimated Driving Route',
     isGoogleMaps: false
   }
+}
+
+/**
+ * Calculates human-readable arrival time based on duration in minutes.
+ * e.g., 28 -> "3:45 PM"
+ */
+export function calculateEta(durationMinutes) {
+  if (!durationMinutes || isNaN(durationMinutes)) return ''
+  const arrival = new Date(Date.now() + Number(durationMinutes) * 60000)
+  return arrival.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 /**
@@ -403,6 +434,14 @@ export async function geocodePlaceId(placeId, fallbackAddress) {
   }
 
   return null
+}
+
+/**
+ * Geocodes an address string to [lat, lng].
+ */
+export async function geocodeAddress(address) {
+  if (!address) return null
+  return geocodePlaceId(null, address)
 }
 
 /**

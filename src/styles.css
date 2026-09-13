@@ -6663,12 +6663,20 @@ body.modal-open {
 
 /* Rider Trip Card Additions */
 .trip-history-card {
-	transition: transform 0.18s ease, box-shadow 0.18s ease;
+	cursor: pointer;
+	user-select: none;
+	transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
 }
 
 .trip-history-card:hover {
-	transform: translateY(-2px);
-	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+	transform: translateY(-3px);
+	box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+	border-color: #38bdf8 !important;
+}
+
+.trip-history-card:focus-visible {
+	outline: 2px solid #0284c7;
+	outline-offset: 2px;
 }
 
 .trip-card-footer-actions {
@@ -6944,8 +6952,420 @@ body.modal-open {
 }
 
 /* ==========================================================================
-   Trip Receipt & Invoice Modal Styles
+   Trip Ride Preview & Invoice Modal Styles
    ========================================================================== */
+.trip-preview-modal {
+	max-width: 520px !important;
+	width: calc(100% - 32px) !important;
+	max-height: 90vh !important;
+	max-height: 90dvh !important;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden !important;
+	padding: 0 !important;
+	border-radius: 20px !important;
+	box-shadow: 0 25px 60px -15px rgba(15, 23, 42, 0.35) !important;
+}
+
+.trip-preview-heading {
+	padding: 16px 20px !important;
+	border-bottom: 1px solid #e2e8f0;
+	background: #ffffff;
+	flex-shrink: 0;
+}
+
+.trip-preview-scroll-body {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 16px 20px 24px 20px;
+	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+/* Ride Route Snapshot Image Preview (Start, End & Trajectory) */
+.trip-route-image-card {
+	position: relative;
+	width: 100%;
+	height: 200px;
+	border-radius: 16px;
+	overflow: hidden;
+	background: #0b132b;
+	border: 1.5px solid rgba(255, 255, 255, 0.12);
+	box-shadow: 0 10px 25px -5px rgba(11, 19, 43, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+}
+
+.trip-route-snapshot-map {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	z-index: 1;
+	pointer-events: none;
+}
+
+.route-tag {
+	position: absolute;
+	top: 12px;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: rgba(15, 23, 42, 0.85);
+	backdrop-filter: blur(8px);
+	-webkit-backdrop-filter: blur(8px);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	padding: 6px 10px;
+	border-radius: 10px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+	max-width: 180px;
+	pointer-events: none;
+	user-select: none;
+}
+
+.route-tag.start-tag {
+	left: 12px;
+}
+
+.route-tag.end-tag {
+	right: 12px;
+}
+
+.route-tag .tag-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+.route-tag .tag-dot.pickup {
+	background: #10b981;
+	box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.4);
+}
+
+.route-tag .tag-dot.drop {
+	background: #ef4444;
+	box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.4);
+}
+
+.tag-text-wrap {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	line-height: 1.1;
+}
+
+.tag-lbl {
+	font: 800 8px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #94a3b8;
+	letter-spacing: 0.06em;
+	margin-bottom: 2px;
+}
+
+.tag-val {
+	font: 700 11.5px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #ffffff;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.route-image-stats-pill {
+	position: absolute;
+	bottom: 12px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 20;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	background: rgba(15, 23, 42, 0.88);
+	backdrop-filter: blur(8px);
+	-webkit-backdrop-filter: blur(8px);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	padding: 6px 14px;
+	border-radius: 999px;
+	color: #ffffff;
+	font: 600 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+	white-space: nowrap;
+	pointer-events: none;
+	user-select: none;
+	max-width: calc(100% - 24px);
+}
+
+.route-image-stats-pill .pill-sep {
+	opacity: 0.4;
+}
+
+.route-image-stats-pill .summary-note {
+	color: #cbd5e1;
+	font-weight: 500;
+	max-width: 130px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+@media (max-width: 480px) {
+	.route-tag {
+		max-width: 130px;
+		padding: 4px 8px;
+	}
+	.tag-lbl {
+		font-size: 7px;
+	}
+	.tag-val {
+		font-size: 10.5px;
+	}
+	.route-image-stats-pill {
+		padding: 5px 10px;
+		font-size: 10px;
+	}
+}
+
+/* Status & Date Bar */
+.trip-preview-status-strip {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	background: #ffffff;
+	border: 1.5px solid #e2e8f0;
+	padding: 12px 16px;
+	border-radius: 14px;
+	box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+
+.status-strip-cell {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+}
+
+.status-strip-cell.status-strip-schedule {
+	align-items: flex-end;
+	text-align: right;
+}
+
+.status-strip-label {
+	font: 800 9.5px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	letter-spacing: 0.08em;
+	color: #64748b;
+	text-transform: uppercase;
+}
+
+.status-strip-datetime-val {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 2px;
+}
+
+.status-strip-date {
+	font: 700 12.5px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #0f172a;
+	white-space: nowrap;
+}
+
+.status-strip-time {
+	font: 600 11.5px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #64748b;
+	white-space: nowrap;
+}
+
+/* Stops Detail Card */
+.trip-preview-stops-card {
+	background: #ffffff;
+	border: 1.5px solid #e2e8f0;
+	border-radius: 14px;
+	padding: 14px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.preview-stop-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.preview-stop-marker {
+	font-size: 16px;
+	line-height: 1.2;
+}
+
+.preview-stop-details {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	flex: 1;
+}
+
+.preview-stop-label {
+	font: 800 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #94a3b8;
+	letter-spacing: 0.05em;
+	margin-bottom: 3px;
+}
+
+.preview-stop-address {
+	margin: 0;
+	font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #0f172a;
+	word-break: break-word;
+}
+
+.preview-stop-connector {
+	width: 2px;
+	height: 14px;
+	background: #cbd5e1;
+	margin-left: 7px;
+	border-radius: 1px;
+}
+
+/* Driver Card */
+.trip-preview-driver-card {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	background: #f8fafc;
+	border: 1.5px solid #e2e8f0;
+	padding: 12px 14px;
+	border-radius: 12px;
+	gap: 12px;
+}
+
+.driver-preview-avatar {
+	font-size: 24px;
+	width: 42px;
+	height: 42px;
+	border-radius: 50%;
+	background: #eff6ff;
+	border: 1.5px solid #bfdbfe;
+	display: grid;
+	place-items: center;
+	flex-shrink: 0;
+}
+
+.driver-preview-info {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	flex: 1;
+	min-width: 0;
+}
+
+.driver-preview-info strong {
+	font: 700 13px -apple-system, sans-serif;
+	color: #0f172a;
+}
+
+.driver-preview-info span {
+	font: 500 11.5px -apple-system, sans-serif;
+	color: #64748b;
+}
+
+.driver-rating-text {
+	font: 700 10.5px -apple-system, sans-serif !important;
+	color: #d97706 !important;
+}
+
+/* Fare Card */
+.trip-preview-fare-card {
+	background: #f8fafc;
+	border: 1.5px solid #e2e8f0;
+	border-radius: 14px;
+	padding: 14px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.trip-preview-fare-card h4 {
+	margin: 0 0 4px 0;
+	font: 700 12px -apple-system, sans-serif;
+	color: #64748b;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.fare-payment-pill {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	background: #ffffff;
+	border: 1px solid #e2e8f0;
+	padding: 8px 12px;
+	border-radius: 8px;
+	margin-top: 6px;
+	font: 600 11.5px -apple-system, sans-serif;
+	color: #334155;
+}
+
+/* Action Buttons */
+.trip-preview-actions {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 10px;
+	margin-top: 4px;
+}
+
+.btn-preview-rebook {
+	background: #0284c7;
+	border: 1.5px solid #0284c7;
+	color: #ffffff;
+	font: 700 12.5px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	padding: 12px 14px;
+	border-radius: 10px;
+	cursor: pointer;
+	box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
+	transition: all 0.15s ease;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+}
+
+.btn-preview-rebook:hover {
+	background: #0369a1;
+	transform: translateY(-1px);
+}
+
+.btn-preview-download {
+	background: #ffffff;
+	border: 1.5px solid #cbd5e1;
+	color: #0f172a;
+	font: 700 12.5px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	padding: 12px 14px;
+	border-radius: 10px;
+	cursor: pointer;
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+	transition: all 0.15s ease;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+}
+
+.btn-preview-download:hover {
+	background: #f8fafc;
+	border-color: #94a3b8;
+	transform: translateY(-1px);
+}
+
+@media (max-width: 480px) {
+	.trip-preview-actions {
+		grid-template-columns: 1fr;
+	}
+}
+
 .receipt-modal {
 	max-width: 460px !important;
 }
@@ -7623,6 +8043,147 @@ div[style*="background-color: rgba(0, 0, 0, 0.6)"] {
 	box-shadow: 0 6px 18px rgba(37, 99, 235, 0.25);
 }
 
+/* ==========================================================================
+   FLOATING ROUTE JOURNEY HUD (MAP CANVAS)
+   ========================================================================== */
+.map-floating-route-hud {
+	position: absolute;
+	top: 14px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 410;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 16px;
+	background: rgba(15, 23, 42, 0.88);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	border: 1px solid rgba(255, 255, 255, 0.18);
+	border-radius: 999px;
+	box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1);
+	color: #ffffff;
+	pointer-events: auto;
+	user-select: none;
+	animation: slideDownHud 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+	max-width: calc(100% - 130px);
+}
+
+.native-map-mode .map-floating-route-hud {
+	top: 74px;
+}
+
+@keyframes slideDownHud {
+	from {
+		opacity: 0;
+		transform: translate(-50%, -10px);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, 0);
+	}
+}
+
+.hud-metric-pill {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	white-space: nowrap;
+}
+
+.hud-metric-icon {
+	font-size: 15px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.hud-metric-data {
+	display: flex;
+	flex-direction: column;
+	line-height: 1.1;
+}
+
+.hud-metric-val {
+	font: 800 14px/1.1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #ffffff;
+	letter-spacing: -0.01em;
+}
+
+.hud-metric-val small {
+	font-size: 10px;
+	font-weight: 600;
+	color: #94a3b8;
+	margin-left: 1px;
+}
+
+.hud-metric-val.summary-text {
+	max-width: 140px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+}
+
+.hud-metric-lbl {
+	font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #94a3b8;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin-top: 2px;
+}
+
+.hud-divider {
+	width: 1px;
+	height: 22px;
+	background: rgba(255, 255, 255, 0.2);
+	flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+	.map-floating-route-hud {
+		top: 60px;
+		max-width: calc(100% - 24px);
+		padding: 6px 12px;
+		gap: 8px;
+	}
+	.native-map-mode .map-floating-route-hud {
+		top: 114px;
+	}
+	.hide-mobile {
+		display: none !important;
+	}
+}
+
+/* Custom Leaflet Pin Markers */
+.leaflet-custom-marker-pickup,
+.leaflet-custom-marker-drop {
+	background: transparent;
+	border: none;
+}
+
+.map-pin-core {
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 800;
+	font-size: 12px;
+	color: #ffffff;
+	box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35), 0 0 0 2.5px #ffffff;
+	transition: transform 0.2s ease;
+}
+
+.map-pin-core.pickup {
+	background: #10b981;
+}
+
+.map-pin-core.drop {
+	background: #ef4444;
+}
+
 /* 50/50 Floating Popup Booking Card on Map Background */
 .rapido-drawer {
 	position: absolute;
@@ -8103,63 +8664,370 @@ input.rapido-destination-input::placeholder,
 	background: #ef4444;
 }
 
-.route-header-stops .stop-name {
-	font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-	color: #475569;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	max-width: 90px;
+/* ==========================================================================
+   PROMINENT ROUTE OVERVIEW IN SEARCH MODE
+   ========================================================================== */
+.search-route-summary-card {
+	background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+	border: 1.5px solid #38bdf8;
+	border-radius: 14px;
+	padding: 12px 14px;
+	margin: 8px 0 12px 0;
+	cursor: pointer;
+	box-shadow: 0 4px 14px rgba(14, 165, 233, 0.12);
+	transition: all 0.2s ease;
 }
 
-.route-header-stops .stop-name.destination {
-	color: #0f172a;
+.search-route-summary-card:hover {
+	transform: translateY(-1px);
+	box-shadow: 0 6px 18px rgba(14, 165, 233, 0.2);
+	border-color: #0284c7;
 }
 
-.route-header-stops .stop-connector {
-	width: 14px;
-	height: 2px;
-	background: #cbd5e1;
-	border-radius: 2px;
-	flex-shrink: 0;
+.summary-card-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 8px;
 }
 
-.route-header-right {
+.summary-card-badge {
+	font: 800 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #0369a1;
+	background: #ffffff;
+	padding: 3px 8px;
+	border-radius: 999px;
+	letter-spacing: 0.04em;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+.summary-card-traffic {
+	font: 700 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #059669;
+}
+
+.summary-card-stops {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.summary-stop {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1;
+	min-width: 0;
+}
+
+.summary-stop-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
 	flex-shrink: 0;
 }
 
-.route-stat-tag {
-	font: 700 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-	color: #0f172a;
-	background: #ffffff;
-	border: 1px solid #cbd5e1;
-	padding: 4px 8px;
-	border-radius: 8px;
+.summary-stop-dot.pickup {
+	background: #10b981;
+}
+
+.summary-stop-dot.drop {
+	background: #ef4444;
+}
+
+.summary-stop-text {
+	font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #1e293b;
 	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
-.route-stat-tag small {
-	font-weight: 500;
+.summary-stop-text.dest {
+	font-weight: 700;
+	color: #0f172a;
+}
+
+.summary-stop-arrow {
+	color: #94a3b8;
+	font-size: 12px;
+	flex-shrink: 0;
+}
+
+.summary-metrics-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-around;
+	background: #ffffff;
+	border-radius: 10px;
+	padding: 8px 10px;
+	border: 1px solid rgba(14, 165, 233, 0.2);
+}
+
+.summary-metric {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.summary-metric .metric-icon {
+	font-size: 14px;
+}
+
+.summary-metric .metric-text-group {
+	display: flex;
+	flex-direction: column;
+	line-height: 1.1;
+}
+
+.summary-metric strong {
+	font: 800 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #0f172a;
+}
+
+.summary-metric small {
+	font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 	color: #64748b;
+	text-transform: uppercase;
+	margin-top: 2px;
 }
 
-.btn-route-edit {
+.summary-metric-divider {
+	width: 1px;
+	height: 20px;
+	background: #e2e8f0;
+}
+
+/* ==========================================================================
+   PROMINENT JOURNEY OVERVIEW PANEL (RIDE OPTIONS MODE)
+   ========================================================================== */
+.prominent-journey-card {
+	background: linear-gradient(145deg, #ffffff, #f8fafc);
+	border: 1.5px solid #e2e8f0;
+	border-radius: 16px;
+	padding: 12px 14px;
+	margin-bottom: 12px;
+	box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+}
+
+.journey-card-top-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 10px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid #f1f5f9;
+}
+
+.journey-card-badge-wrap {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.journey-badge-pill {
+	font: 800 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #0284c7;
+	background: #eff6ff;
+	border: 1px solid #bfdbfe;
+	padding: 3px 8px;
+	border-radius: 999px;
+	letter-spacing: 0.04em;
+}
+
+.journey-traffic-pill {
+	font: 700 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	padding: 3px 8px;
+	border-radius: 999px;
+}
+
+.journey-traffic-pill.traffic-fast {
+	color: #059669;
+	background: #ecfdf5;
+	border: 1px solid #a7f3d0;
+}
+
+.journey-traffic-pill.traffic-slow {
+	color: #d97706;
+	background: #fffbeb;
+	border: 1px solid #fde68a;
+}
+
+.btn-journey-edit {
 	background: #eff6ff;
 	border: 1px solid #bfdbfe;
 	border-radius: 8px;
 	color: #2563eb;
-	font: 600 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-	padding: 5px 8px;
+	font: 700 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	padding: 5px 10px;
 	cursor: pointer;
 	white-space: nowrap;
 	transition: all 0.15s ease;
 }
 
-.btn-route-edit:hover {
+.btn-journey-edit:hover {
 	background: #dbeafe;
+	transform: translateY(-1px);
+}
+
+/* Location Flow with connector line */
+.journey-locations-flow {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 12px;
+	background: #ffffff;
+	border-radius: 12px;
+	padding: 8px 10px;
+	border: 1px solid #f1f5f9;
+}
+
+.journey-location-stop {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+}
+
+.stop-marker-column {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	width: 14px;
+	padding-top: 2px;
+}
+
+.stop-marker-column .stop-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+.stop-marker-column .stop-dot.pickup {
+	background: #10b981;
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+}
+
+.stop-marker-column .stop-dot.drop {
+	background: #ef4444;
+	box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+.stop-marker-column .stop-line {
+	width: 2px;
+	height: 16px;
+	background: #cbd5e1;
+	margin: 3px 0;
+	border-radius: 1px;
+}
+
+.stop-info {
+	display: flex;
+	flex-direction: column;
+	line-height: 1.2;
+	min-width: 0;
+	flex: 1;
+}
+
+.stop-label {
+	font: 700 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #94a3b8;
+	letter-spacing: 0.05em;
+	margin-bottom: 2px;
+}
+
+.stop-address {
+	font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #334155;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.stop-address.dest {
+	font-weight: 700;
+	color: #0f172a;
+}
+
+/* 3 Bold Metric Overview Cards */
+.journey-metrics-grid {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 8px;
+}
+
+.journey-metric-box {
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 12px;
+	padding: 8px 6px;
+	text-align: center;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	transition: all 0.2s ease;
+}
+
+.journey-metric-box:hover {
+	background: #f1f5f9;
+	border-color: #cbd5e1;
+}
+
+.metric-box-header {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-bottom: 4px;
+}
+
+.metric-box-icon {
+	font-size: 13px;
+}
+
+.metric-box-title {
+	font: 700 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #64748b;
+	letter-spacing: 0.05em;
+}
+
+.metric-box-value {
+	display: flex;
+	align-items: baseline;
+	justify-content: center;
+	gap: 2px;
+}
+
+.metric-box-value .value-num {
+	font: 800 16px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #0284c7;
+	letter-spacing: -0.02em;
+}
+
+.journey-metric-box.duration .value-num {
+	color: #2563eb;
+}
+
+.journey-metric-box.eta .value-num {
+	color: #059669;
+	font-size: 14px;
+}
+
+.metric-box-value .value-unit {
+	font: 700 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #64748b;
+}
+
+.metric-box-sub {
+	font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	color: #94a3b8;
+	margin-top: 3px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 100%;
 }
 
 /* Vehicle Selection Cards Grid */
@@ -9034,25 +9902,114 @@ input.rapido-destination-input::placeholder,
 	background: #475569 !important;
 }
 
-[data-theme="dark"] .route-stat-tag {
-	background: #0f172a !important;
-	border-color: #334155 !important;
+[data-theme="dark"] .search-route-summary-card {
+	background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95)) !important;
+	border-color: rgba(56, 189, 248, 0.4) !important;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-theme="dark"] .summary-card-badge {
+	background: rgba(56, 189, 248, 0.15) !important;
+	color: #38bdf8 !important;
+}
+
+[data-theme="dark"] .summary-card-stops .summary-stop-text {
+	color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .summary-card-stops .summary-stop-text.dest {
 	color: #f8fafc !important;
 }
 
-[data-theme="dark"] .route-stat-tag small {
+[data-theme="dark"] .summary-metrics-row {
+	background: #0f172a !important;
+	border-color: #334155 !important;
+}
+
+[data-theme="dark"] .summary-metric strong {
+	color: #f8fafc !important;
+}
+
+[data-theme="dark"] .summary-metric small {
 	color: #94a3b8 !important;
 }
 
-[data-theme="dark"] .btn-route-edit {
+[data-theme="dark"] .prominent-journey-card {
+	background: linear-gradient(145deg, #1e293b, #0f172a) !important;
+	border-color: #334155 !important;
+	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-theme="dark"] .journey-card-top-row {
+	border-bottom-color: #334155 !important;
+}
+
+[data-theme="dark"] .journey-badge-pill {
+	background: rgba(56, 189, 248, 0.15) !important;
+	border-color: rgba(56, 189, 248, 0.3) !important;
+	color: #38bdf8 !important;
+}
+
+[data-theme="dark"] .btn-journey-edit {
 	background: rgba(56, 189, 248, 0.12) !important;
 	border-color: rgba(56, 189, 248, 0.3) !important;
 	color: #38bdf8 !important;
 }
 
-[data-theme="dark"] .btn-route-edit:hover {
+[data-theme="dark"] .btn-journey-edit:hover {
 	background: rgba(56, 189, 248, 0.22) !important;
 	color: #7dd3fc !important;
+}
+
+[data-theme="dark"] .journey-locations-flow {
+	background: #0f172a !important;
+	border-color: #334155 !important;
+}
+
+[data-theme="dark"] .stop-label {
+	color: #64748b !important;
+}
+
+[data-theme="dark"] .stop-address {
+	color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .stop-address.dest {
+	color: #f8fafc !important;
+}
+
+[data-theme="dark"] .journey-metric-box {
+	background: #0f172a !important;
+	border-color: #334155 !important;
+}
+
+[data-theme="dark"] .journey-metric-box:hover {
+	background: #1e293b !important;
+	border-color: #475569 !important;
+}
+
+[data-theme="dark"] .journey-metric-box .metric-box-title {
+	color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .journey-metric-box .value-num {
+	color: #38bdf8 !important;
+}
+
+[data-theme="dark"] .journey-metric-box.duration .value-num {
+	color: #60a5fa !important;
+}
+
+[data-theme="dark"] .journey-metric-box.eta .value-num {
+	color: #34d399 !important;
+}
+
+[data-theme="dark"] .journey-metric-box .value-unit {
+	color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .journey-metric-box .metric-box-sub {
+	color: #64748b !important;
 }
 
 [data-theme="dark"] .rapido-car-card {
@@ -9211,11 +10168,96 @@ input.rapido-destination-input::placeholder,
 
 [data-theme="dark"] .profile-modal,
 [data-theme="dark"] .receipt-modal,
+[data-theme="dark"] .trip-preview-modal,
 [data-theme="dark"] .map-picker-modal {
 	background: #0f172a !important;
 	border: 1px solid #334155 !important;
 	color: #f8fafc !important;
 	box-shadow: 0 24px 80px rgba(0, 0, 0, 0.85) !important;
+}
+
+[data-theme="dark"] .trip-preview-heading {
+	background: #0f172a !important;
+	border-bottom-color: #334155 !important;
+}
+
+[data-theme="dark"] .trip-route-image-card {
+	border-color: #334155 !important;
+	background: #0b132b !important;
+}
+
+[data-theme="dark"] .trip-preview-status-strip {
+	background: #1e293b !important;
+	border-color: #334155 !important;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-theme="dark"] .status-strip-label {
+	color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .status-strip-date {
+	color: #f8fafc !important;
+}
+
+[data-theme="dark"] .status-strip-time {
+	color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .trip-preview-stops-card {
+	background: #1e293b !important;
+	border-color: #334155 !important;
+}
+
+[data-theme="dark"] .preview-stop-label {
+	color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .preview-stop-address {
+	color: #f8fafc !important;
+}
+
+[data-theme="dark"] .preview-stop-connector {
+	background: #475569 !important;
+}
+
+[data-theme="dark"] .trip-preview-driver-card {
+	background: #1e293b !important;
+	border-color: #334155 !important;
+}
+
+[data-theme="dark"] .driver-preview-avatar {
+	background: #0f172a !important;
+	border-color: #334155 !important;
+}
+
+[data-theme="dark"] .driver-preview-info strong {
+	color: #f8fafc !important;
+}
+
+[data-theme="dark"] .driver-preview-info span {
+	color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .trip-preview-fare-card {
+	background: #1e293b !important;
+	border-color: #334155 !important;
+}
+
+[data-theme="dark"] .fare-payment-pill {
+	background: #0f172a !important;
+	border-color: #334155 !important;
+	color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .btn-preview-download {
+	background: #1e293b !important;
+	border-color: #475569 !important;
+	color: #f8fafc !important;
+}
+
+[data-theme="dark"] .btn-preview-download:hover {
+	background: #334155 !important;
 }
 
 [data-theme="dark"] .modal-heading h2 {
