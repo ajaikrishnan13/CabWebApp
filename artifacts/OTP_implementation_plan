@@ -9,7 +9,7 @@ Replace the email and password login/registration with an authentic **Mobile Num
 ### 1. Auth Flow Engine (`src/database.js`)
 - Add helper methods for Phone OTP:
   - `auth.sendPhoneOtp(phone)`: Generates a secure 6-digit code, saves it with a 5-minute expiry, and returns the verification code for in-app delivery.
-  - `auth.verifyPhoneOtp(phone, otp, role, userDetails)`: Verifies the code and establishes the user session using Supabase Auth (mapped seamlessly to `${cleanPhone}@nammadriver.app` with `user_metadata: { phone, role, name, vehicleNumber, vehicleModel }`).
+  - `auth.verifyPhoneOtp(phone, otp, role, userDetails)`: Verifies the code and establishes the user session using internal SQLite Auth (mapped seamlessly to `${cleanPhone}@nammadriver.app` with `user_metadata: { phone, role, name, vehicleNumber, vehicleModel }`).
   - Supports both existing accounts and new registrations seamlessly.
 
 ---

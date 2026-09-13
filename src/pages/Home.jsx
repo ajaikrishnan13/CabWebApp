@@ -655,9 +655,7 @@ export default function Home({ user, onSignOut }) {
         setProfileSaved(false)
       }, 1400)
     } catch (err) {
-      const message = err.code === 'PGRST205' || err.message?.includes("public.profiles")
-        ? 'Profile storage is not ready. Run the latest supabase-schema.sql in Supabase SQL Editor, then try again.'
-        : err.message || 'Could not save profile.'
+      const message = err.message || 'Could not save profile. Please try again.'
       setProfileMessage(message)
     } finally {
       setProfileLoading(false)

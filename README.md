@@ -1,33 +1,45 @@
-Namma Driver — Starter
+# Namma Driver — Private Car Service
 
-This is a minimal starter implementing:
-- React + Vite front-end
-- Supabase Auth and Postgres for users & bookings
-- Leaflet (OpenStreetMap) for map interaction
+A modern web application for cab booking, rental, and driver partner services.
 
-What to do next:
-1. Install dependencies:
-   npm install
+## Features
+- **Frontend**: React 18 + Vite (SPA)
+- **Database**: Internal SQLite database (`server/data/namma_driver.db`) via `sql.js` (WebAssembly)
+- **Backend API**: Express REST API (`server/index.js`) with Server-Sent Events (SSE) for real-time driver coordination
+- **Mapping & Routing**: Leaflet (OpenStreetMap) with Google Maps / ArcGIS geocoding support
+- **Zero Cloud Subscriptions**: Runs 100% self-hosted on your machine or private server
 
-3. Configure Supabase:
-   - Create a free project at https://supabase.com/
-   - Copy `.env.example` to `.env` and add the project URL and anon key from Project Settings → API.
-   - Run the SQL in `supabase-schema.sql` in the Supabase SQL Editor.
-   - This creates the bookings and profiles tables, security policies, and a profile trigger for new users.
-   - Enable email authentication under Authentication → Providers.
+---
 
-4. Run the app locally:
-   npm run dev
+## Getting Started
 
-Notes:
-- User accounts are managed securely by Supabase Auth.
-- Booking requests are stored in Supabase Postgres with Row Level Security, so users can only access their own bookings.
-- Users can update their name, email, phone number, and birthday from the profile button in the home header.
-- Location search uses ArcGIS World Geocoding with India restricted as the search country.
-- Route preview uses Leaflet with the free OSRM driving-route service and shows the route line, distance, and ETA after both stops are selected.
-- The app shows a combined Register / Sign In screen and a Home booking screen after auth.
-- Replace /public/logo.png with your logo file (or update the image path in src/pages/Auth.jsx).
-If you'd like, next steps can include:
-- Adding address autocomplete with a geocoding service
-- Adding server-side validation / Cloud Functions for pricing and driver assignment
-- Improving UI styling (Tailwind or design system)
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Configure Environment
+Set your Google Maps API key in `.env`:
+```env
+VITE_GOOGLE_MAPS_API_KEY=AIzaSy...
+```
+
+### 3. Run Development Server
+```bash
+npm run dev
+```
+This automatically starts both the internal API database server on port `3001` and the Vite dev server on port `5174` (reverse-proxied).
+
+---
+
+## Test Accounts
+- **Rider**: `9876543210` (OTP: `123456`)
+- **Driver**: `9876543211` (OTP: `123456`)
+
+---
+
+## Production Build
+```bash
+npm run build
+```
+Generates production-ready static assets in the `dist/` folder.

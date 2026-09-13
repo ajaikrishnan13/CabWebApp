@@ -7,7 +7,6 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          supabase: ['@supabase/supabase-js'],
           react: ['react', 'react-dom']
         }
       }
@@ -17,5 +16,15 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     allowedHosts: ['delusion-coat-excitable.ngrok-free.dev'],
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true
+      },
+      '/uploads': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true
+      }
+    }
   },
 })

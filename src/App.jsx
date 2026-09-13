@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { auth, database, supabaseConfigured } from './database'
+import { auth, database, databaseConfigured } from './database'
 import AuthPage from './pages/Auth'
 import Home from './pages/Home'
 import DriverHome from './pages/DriverHome'
@@ -84,10 +84,10 @@ export default function App() {
     await auth.signOut()
   }
 
-  if (!supabaseConfigured) {
+  if (!databaseConfigured) {
     return (
       <div className="center" style={{ color: '#f8fafc', background: '#0f172a', minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
-        <p>Supabase is not configured. Add `.env` from `.env.example` and restart the app.</p>
+        <p>Internal database is initializing. Please wait...</p>
       </div>
     )
   }
