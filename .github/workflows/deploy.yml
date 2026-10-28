@@ -1,0 +1,125 @@
+name: Deploy
+
+# Push to master (or "Run workflow"): build, then rsync dist/ to the nammadriver.imajkrish.com folder on Hostinger over SSH.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  # never cancel a deploy half-way; only supersede in-flight PR builds
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      - name: Check the build
+        run: |
+          test -s dist/index.html
+          ls dist/assets/*.js > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-dist
+          path: dist/
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Hostinger
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://nammadriver.imajkrish.com
+    env:
+      SSH_HOST: ${{ secrets.HOSTINGER_HOST }}
+      SSH_PORT: ${{ secrets.HOSTINGER_PORT }}
+      SSH_USER: ${{ secrets.HOSTINGER_USER }}
+      SSH_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+      REMOTE_PATH: ${{ secrets.NAMMADRIVER_PATH }}
+    steps:
+      - name: Check deploy secrets
+        run: |
+          missing=""
+          for v in SSH_HOST SSH_PORT SSH_USER SSH_KEY REMOTE_PATH; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Missing secrets::Add these repository secrets, then re-run:$missing (HOSTINGER_HOST/PORT/USER/SSH_KEY and NAMMADRIVER_PATH)."
+            exit 1
+          fi
+          # rsync --delete runs against this folder: refuse anything that is not the subdomain's own folder,
+          # so a wrong value can never wipe the main imajkrish.com site.
+          case "$REMOTE_PATH" in
+            */nammadriver|*/nammadriver/) ;;
+            *) echo "::error title=Wrong deploy path::NAMMADRIVER_PATH must be the nammadriver subdomain folder (got: $REMOTE_PATH). Refusing to deploy."; exit 1 ;;
+          esac
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-dist
+          path: dist/
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          : > ~/.ssh/known_hosts
+          for i in 1 2 3 4; do
+            if ssh-keyscan -T 15 -p "$SSH_PORT" -H "$SSH_HOST" > ~/.ssh/kh.new 2> ~/.ssh/kh.err && [ -s ~/.ssh/kh.new ]; then
+              cat ~/.ssh/kh.new >> ~/.ssh/known_hosts
+              break
+            fi
+            sleep 6
+          done
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "::error title=SSH server unreachable::Could not fetch the host key from HOSTINGER_HOST/HOSTINGER_PORT after 4 tries."
+            exit 1
+          fi
+          cat > ~/.ssh/config <<CFG
+          Host hostinger
+            HostName $SSH_HOST
+            Port $SSH_PORT
+            User $SSH_USER
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            ServerAliveInterval 30
+          CFG
+
+      - name: Test the SSH login and target folder
+        run: |
+          ssh -o BatchMode=yes -o ConnectTimeout=20 hostinger "test -d '$REMOTE_PATH' && echo 'Target folder exists'" \
+            || { echo "::error title=SSH or path problem::Login failed or $REMOTE_PATH does not exist on the server."; exit 1; }
+
+      - name: Upload
+        run: |
+          rsync -az --delete-after --itemize-changes -e "ssh -o BatchMode=yes" dist/ "hostinger:${REMOTE_PATH%/}/"
+
+      - name: Verify the live site
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://nammadriver.imajkrish.com/ || true)
+            [ "$code" = "200" ] && echo "Live: HTTP $code" && exit 0
+            sleep 5
+          done
+          echo "::error title=Site check failed::https://nammadriver.imajkrish.com/ returned HTTP $code after deploy."
+          exit 1
