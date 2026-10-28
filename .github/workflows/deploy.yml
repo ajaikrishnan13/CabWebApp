@@ -1,6 +1,7 @@
 name: Deploy
 
-# Push to master (or "Run workflow"): build, then rsync dist/ to the nammadriver.imajkrish.com folder on Hostinger over SSH.
+# Currently hosted on Vercel, so the Hostinger deploy only runs from "Run workflow" (push to master builds only).
+# Manual run: build, then rsync dist/ to the nammadriver.imajkrish.com folder on Hostinger over SSH.
 
 on:
   push:
@@ -44,7 +45,7 @@ jobs:
   deploy:
     name: Deploy to Hostinger
     needs: build
-    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
